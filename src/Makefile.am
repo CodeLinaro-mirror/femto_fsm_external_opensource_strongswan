@@ -135,3 +135,7 @@ endif
 if USE_AIKGEN
   SUBDIRS += aikgen
 endif
+
+if USE_FSM
+  SUBDIRS += charon-fsm
+endif

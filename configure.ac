@@ -1,4 +1,4 @@
-#
+# Copyright (c) 2016, The Linux Foundation. All rights reserved.
 # Copyright (C) 2007-2015 Tobias Brunner
 # Copyright (C) 2006-2015 Andreas Steffen
 # Copyright (C) 2006-2014 Martin Willi
@@ -286,6 +286,7 @@ ARG_ENABL_SET([svc],            [enable charon Windows service.])
 ARG_ENABL_SET([systemd],        [enable systemd specific IKE daemon charon-systemd.])
 ARG_ENABL_SET([swanctl],        [enable swanctl configuration and control tool.])
 ARG_ENABL_SET([tkm],            [enable Trusted Key Manager support.])
+ARG_ENABL_SET([fsm],            [enable FSM-specific IKE daemon charon-fsm.])
 # optional features
 ARG_ENABL_SET([bfd-backtraces], [use binutils libbfd to resolve backtraces for memory leaks and segfaults.])
 ARG_ENABL_SET([dbghelp-backtraces],[use dbghlp.dll on Windows to create and print backtraces for memory leaks and segfaults.])
@@ -1592,9 +1593,9 @@ AM_CONDITIONAL(USE_PKI, test x$pki = xtrue)
 AM_CONDITIONAL(USE_SCEPCLIENT, test x$scepclient = xtrue)
 AM_CONDITIONAL(USE_SCRIPTS, test x$scripts = xtrue)
 AM_CONDITIONAL(USE_CONFTEST, test x$conftest = xtrue)
-AM_CONDITIONAL(USE_LIBSTRONGSWAN, test x$charon = xtrue -o x$pki = xtrue -o x$scepclient = xtrue -o x$conftest = xtrue -o x$fast = xtrue -o x$imcv = xtrue -o x$nm = xtrue -o x$tkm = xtrue -o x$cmd = xtrue -o x$tls = xtrue -o x$tnc_tnccs = xtrue -o x$aikgen = xtrue -o x$svc = xtrue -o x$systemd = xtrue)
-AM_CONDITIONAL(USE_LIBHYDRA, test x$charon = xtrue -o x$nm = xtrue -o x$tkm = xtrue -o x$cmd = xtrue -o x$svc = xtrue -o x$systemd = xtrue)
-AM_CONDITIONAL(USE_LIBCHARON, test x$charon = xtrue -o x$conftest = xtrue -o x$nm = xtrue -o x$tkm = xtrue -o x$cmd = xtrue -o x$svc = xtrue -o x$systemd = xtrue)
+AM_CONDITIONAL(USE_LIBSTRONGSWAN, test x$charon = xtrue -o x$pki = xtrue -o x$scepclient = xtrue -o x$conftest = xtrue -o x$fast = xtrue -o x$imcv = xtrue -o x$nm = xtrue -o x$tkm = xtrue -o x$cmd = xtrue -o x$tls = xtrue -o x$tnc_tnccs = xtrue -o x$aikgen = xtrue -o x$svc = xtrue -o x$systemd = xtrue -o x$fsm = xtrue)
+AM_CONDITIONAL(USE_LIBHYDRA, test x$charon = xtrue -o x$nm = xtrue -o x$tkm = xtrue -o x$cmd = xtrue -o x$svc = xtrue -o x$systemd = xtrue -o x$fsm = xtrue)
+AM_CONDITIONAL(USE_LIBCHARON, test x$charon = xtrue -o x$conftest = xtrue -o x$nm = xtrue -o x$tkm = xtrue -o x$cmd = xtrue -o x$svc = xtrue -o x$systemd = xtrue -o x$fsm = xtrue)
 AM_CONDITIONAL(USE_LIBIPSEC, test x$libipsec = xtrue)
 AM_CONDITIONAL(USE_LIBTNCIF, test x$tnc_tnccs = xtrue -o x$imcv = xtrue)
 AM_CONDITIONAL(USE_LIBTNCCS, test x$tnc_tnccs = xtrue)
@@ -1623,6 +1624,7 @@ AM_CONDITIONAL(USE_LEGACY_SYSTEMD, test -n "$systemdsystemunitdir" -a "x$systemd
 AM_CONDITIONAL(USE_RUBY_GEMS, test x$ruby_gems = xtrue)
 AM_CONDITIONAL(USE_PYTHON_EGGS, test x$python_eggs = xtrue)
 AM_CONDITIONAL(USE_PY_TEST, test "x$PY_TEST" != x)
+AM_CONDITIONAL(USE_FSM, test "x$fsm" = xtrue)
 
 # ========================
 #  set global definitions
@@ -1769,6 +1771,8 @@ AC_CONFIG_FILES([
 	src/libimcv/plugins/imc_hcd/Makefile
 	src/libimcv/plugins/imv_hcd/Makefile
 	src/charon/Makefile
+	src/charon-fsm/Makefile
+	src/charon-fsm/tests/Makefile
 	src/charon-nm/Makefile
 	src/charon-tkm/Makefile
 	src/charon-cmd/Makefile

@@ -1,4 +1,5 @@
 /*
+ * Copyright (c) 2016, The Linux Foundation. All rights reserved.
  * Copyright (C) 2007-2014 Tobias Brunner
  * Copyright (C) 2007-2010 Martin Willi
  * Hochschule fuer Technik Rapperswil
@@ -1542,12 +1543,15 @@ static void trigger_mbb_reauth(private_task_manager_t *this)
 	new->set_other_host(new, host->clone(host));
 	host = this->ike_sa->get_my_host(this->ike_sa);
 	new->set_my_host(new, host->clone(host));
+	charon->bus->ike_reestablish_pre(charon->bus, this->ike_sa, new);
 	enumerator = this->ike_sa->create_virtual_ip_enumerator(this->ike_sa, TRUE);
 	while (enumerator->enumerate(enumerator, &host))
 	{
 		new->add_virtual_ip(new, TRUE, host);
 	}
 	enumerator->destroy(enumerator);
+
+	charon->bus->handle_vips(charon->bus, new, TRUE);
 
 	enumerator = this->ike_sa->create_child_sa_enumerator(this->ike_sa);
 	while (enumerator->enumerate(enumerator, &child_sa))
