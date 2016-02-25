@@ -29,6 +29,7 @@
 
 #include <string.h>
 #include <net/if.h>
+#include <time.h>
 #include <collections/hashtable.h>
 #include <threading/thread.h>
 #include <threading/mutex.h>
@@ -121,6 +122,15 @@ struct private_fsm_netlink_ipsec_t
 #define IPSEC_DEFAULT_TIMEOUT 1000
 #define IPSEC_DEFAULT_ERR_TIMEOUT 200
 
+typedef struct stats_t stats_t;
+struct stats_t
+{
+	u_int32_t spi;
+	u_int64_t bytes;
+	u_int64_t count;
+	time_t last_use_time;
+};
+
 static void ipsec_stats_destroy(void *val, const void *key)
 {
 	if (val)
@@ -205,10 +215,9 @@ CALLBACK(ipsec_stats_listener, void *, private_fsm_netlink_ipsec_t *this)
 CALLBACK(ipsec_mcast_resp, void, private_fsm_netlink_ipsec_t *this,
 	struct nss_nlcmn *cm, void *data)
 {
+	struct nss_ipsecmgr_sa_stats *nss_stats = NULL;
 	struct nss_nlipsec_rule *rule_ptr = NULL;
-	struct nss_ipsecmgr_sa_stats *stats = NULL;
-	size_t stats_len = sizeof(struct nss_ipsecmgr_sa_stats);
-	void *oldstats = NULL;
+	stats_t *stats = NULL;
 
 	DBG3(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 
@@ -235,28 +244,66 @@ CALLBACK(ipsec_mcast_resp, void, private_fsm_netlink_ipsec_t *this,
 		return;
 	}
 
-	INIT(stats);
-	if (!stats)
+	nss_stats = &rule_ptr->event.data.stats;
+
+	switch (nss_stats->sa.type)
 	{
-		DBG2(DBG_KNL, "%s: Cound not init stats", __FUNCTION__);
-		return;
+		case NSS_IPSECMGR_SA_TYPE_V4:
+			DBG3(DBG_KNL,
+				"%s: spi 0x%08x src 0x%08x dst 0x%08x ttl %u seq %u crypto %u "
+				"bytes %u count %u", __FUNCTION__,
+				nss_stats->sa.data.v4.spi_index,
+				nss_stats->sa.data.v4.src_ip, nss_stats->sa.data.v4.dst_ip,
+				nss_stats->sa.data.v4.ttl, nss_stats->seq_num,
+				nss_stats->crypto_index, nss_stats->pkts.bytes,
+				nss_stats->pkts.count);
+
+			/* Add stats to hashtable */
+			this->stats_mutex->lock(this->stats_mutex);
+			/* See if we already have stats for this SA */
+			stats = (stats_t *)this->stats->get(this->stats,
+				&nss_stats->sa.data.v4.spi_index);
+
+			if (stats == NULL)
+			{
+				INIT(stats,
+					.last_use_time = nss_stats->pkts.bytes ?
+						time_monotonic(NULL) : 0,
+					.spi = nss_stats->sa.data.v4.spi_index,
+					.bytes = nss_stats->pkts.bytes,
+					.count = nss_stats->pkts.count,
+					);
+
+				if (!stats)
+				{
+					DBG2(DBG_KNL, "%s: Could not init stats", __FUNCTION__);
+					this->stats_mutex->unlock(this->stats_mutex);
+					return;
+				}
+
+				(stats_t *)this->stats->put(this->stats, &stats->spi, stats);
+			}
+			else
+			{
+				/* If there was traffic on the SA since the last mcast, update
+				 * the values.
+				 */
+				if (nss_stats->pkts.bytes != 0)
+				{
+					stats->last_use_time = time_monotonic(NULL);
+					stats->bytes += nss_stats->pkts.bytes;
+					stats->count += nss_stats->pkts.count;
+				}
+			}
+
+			this->stats_mutex->unlock(this->stats_mutex);
+			break;
+		case NSS_IPSECMGR_SA_TYPE_V6:
+			/* TODO: Add IPv6 support */
+			break;
+		default:
+			break;
 	}
-
-	memcpy(stats, &rule_ptr->event.data.stats, stats_len);
-
-	DBG3(DBG_KNL,
-		"%s: spi 0x%08x seq %u crypto %u processed %u failed %u dropped %u",
-		__FUNCTION__, stats->esp_spi, stats->seq_num, stats->crypto_index,
-		stats->pkts.processed, stats->pkts.failed, stats->pkts.dropped);
-
-	/* Add stats to hashtable */
-	this->stats_mutex->lock(this->stats_mutex);
-	oldstats = this->stats->put(this->stats, &stats->esp_spi, stats);
-	if (oldstats != NULL)
-	{
-		free(oldstats);
-	}
-	this->stats_mutex->unlock(this->stats_mutex);
 }
 
 CALLBACK(ipsec_mcast_err, void, private_fsm_netlink_ipsec_t *this, void *msg)
@@ -731,7 +778,7 @@ METHOD(fsm_netlink_ipsec_t, del_encap_subnet, status_t,
 
 METHOD(fsm_netlink_ipsec_t, del_encap_sa, status_t,
 	private_fsm_netlink_ipsec_t *this, char ifname[IFNAMSIZ],
-	u_int32_t *outer_src, u_int32_t *outer_dst,  u_int32_t outer_family,
+	u_int32_t *outer_src, u_int32_t *outer_dst, u_int32_t outer_family,
 	u_int32_t spi, u_int32_t ttl_hl)
 {
 	status_t status = SUCCESS;
@@ -763,6 +810,20 @@ METHOD(fsm_netlink_ipsec_t, del_encap_sa, status_t,
 	{
 		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
 		return status;
+	}
+
+	if (this->stats_mutex && this->stats)
+	{
+		stats_t *stats;
+
+		/* Remove stats related to this SA */
+		this->stats_mutex->lock(this->stats_mutex);
+		stats = this->stats->remove(this->stats, &spi);
+		if (stats)
+		{
+			free(stats);
+		}
+		this->stats_mutex->unlock(this->stats_mutex);
 	}
 
 	return status;
@@ -841,6 +902,7 @@ METHOD(fsm_netlink_ipsec_t, del_decap_sa, status_t,
 	{
 		return status;
 	}
+
 	status = ipsec_send_msg(this, &rule, NSS_NLIPSEC_CMD_DESTROY_DECAP_SA);
 	if (status != SUCCESS)
 	{
@@ -848,18 +910,33 @@ METHOD(fsm_netlink_ipsec_t, del_decap_sa, status_t,
 		return status;
 	}
 
+	if (this->stats_mutex && this->stats)
+	{
+		stats_t *stats;
+
+		/* Remove stats related to this SA */
+		this->stats_mutex->lock(this->stats_mutex);
+		stats = this->stats->remove(this->stats, &spi);
+		if (stats)
+		{
+			free(stats);
+		}
+		this->stats_mutex->unlock(this->stats_mutex);
+	}
+
 	return status;
 }
 
 METHOD(fsm_netlink_ipsec_t, get_stats, status_t,
-	private_fsm_netlink_ipsec_t *this, u_int32_t spi, u_int64_t *packets)
+	private_fsm_netlink_ipsec_t *this, u_int32_t spi, u_int64_t *bytes,
+	u_int64_t *count, time_t *time)
 {
 	status_t status = FAILED;
-	struct nss_ipsecmgr_sa_stats *stats = NULL;
+	stats_t *stats = NULL;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 
-	if (!this || !packets)
+	if (!this || !bytes || !count || !time)
 	{
 		return INVALID_ARG;
 	}
@@ -873,7 +950,9 @@ METHOD(fsm_netlink_ipsec_t, get_stats, status_t,
 	stats = this->stats->get(this->stats, &spi);
 	if (stats != NULL)
 	{
-		*packets = (u_int64_t)stats->pkts.processed;
+		*bytes = stats->bytes;
+		*count = stats->count;
+		*time = stats->last_use_time;
 		status = SUCCESS;
 	}
 	this->stats_mutex->unlock(this->stats_mutex);

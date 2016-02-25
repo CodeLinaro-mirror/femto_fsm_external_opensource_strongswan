@@ -1498,16 +1498,12 @@ METHOD(kernel_ipsec_t, query_sa, status_t,
 	u_int32_t spi, u_int8_t protocol, mark_t mark,
 	u_int64_t *bytes, u_int64_t *packets, time_t *time)
 {
-	status_t status = SUCCESS;
+	status_t status = FAILED;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec", __FUNCTION__);
 
-	if (!this || !src || !dst || !bytes || !packets || !time)
-	{
-		return NOT_SUPPORTED;
-	}
-
-	if (!this->nl_ipsec)
+	if (!this || !this->nl_ipsec || !src || !dst || !bytes || !packets ||
+		!time)
 	{
 		return NOT_SUPPORTED;
 	}
@@ -1516,7 +1512,8 @@ METHOD(kernel_ipsec_t, query_sa, status_t,
 	*time = 0;
 	*packets = 0;
 
-	status = this->nl_ipsec->get_stats(this->nl_ipsec, spi, packets);
+	status = this->nl_ipsec->get_stats(this->nl_ipsec, ntohl(spi), bytes,
+		packets, time);
 	if (status != SUCCESS)
 	{
 		status = NOT_SUPPORTED;

@@ -223,12 +223,14 @@ struct fsm_netlink_ipsec_t
 	 * Retrieve stats for the SA with the given SPI
 	 *
 	 * @param  this		FSM netlink ipsec instance
-	 * @param  spi		SPI to use as key to retrive data
-	 * @param  packets	Location to store number of packets processed
+	 * @param  spi		SPI to use as key to retrieve data
+	 * @param  bytes	Location to store number of bytes processed
+	 * @param  count	Location to store number of packets processed
+	 * @param  time		Location to store last use time
 	 * @return status_t
 	 */
 	status_t (*get_stats)(fsm_netlink_ipsec_t *this, u_int32_t spi,
-		u_int64_t *packets);
+		u_int64_t *bytes, u_int64_t *count, time_t *time);
 
 	/**
 	 * Destroy FSM netlink ipsec instance
