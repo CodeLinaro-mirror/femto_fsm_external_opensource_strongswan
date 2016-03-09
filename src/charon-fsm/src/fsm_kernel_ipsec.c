@@ -315,6 +315,26 @@ struct sa_t
 		u_int32_t ttl;
 	} v4;
 
+	/**
+	 * Encryption algorithm
+	 */
+	u_int16_t enc_alg;
+
+	/**
+	 * Encryption key length
+	 */
+	u_int32_t enc_len;
+
+	/**
+	 * Integrity algorithm
+	 */
+	u_int16_t int_alg;
+
+	/**
+	 * Integrity key length
+	 */
+	u_int32_t int_len;
+
 	/* TODO: Add IPv6 support */
 };
 
@@ -339,6 +359,50 @@ struct sa_expire_t
 	 */
 	u_int32_t hard_offset;
 };
+
+typedef struct icv_len_t icv_len_t;
+struct icv_len_t
+{
+	u_int16_t int_alg;
+	u_int16_t icv_len;
+};
+
+static icv_len_t icv_len[] =
+{
+	{ AUTH_HMAC_SHA1_96, 12 },
+	{ AUTH_HMAC_SHA1_160, 20 },
+	{ AUTH_HMAC_SHA2_256_96, 12 },
+	{ AUTH_HMAC_SHA2_256_128, 16 },
+};
+
+/**
+ * Look up a crypto algorithm name and key size
+ */
+static bool icv_len_lookup(u_int16_t int_alg, icv_len_t **icv_len_ptr)
+{
+	bool found = FALSE;
+	u_int32_t i = 0;
+	u_int32_t count = countof(icv_len);
+
+	if (!icv_len_ptr)
+	{
+		return FALSE;
+	}
+
+	for (i = 0; i < count; i++)
+	{
+		if (icv_len[i].int_alg == int_alg)
+		{
+			*icv_len_ptr = &icv_len[i];
+			DBG2(DBG_KNL, "%s: int_alg %N icv_len %u", __FUNCTION__,
+				integrity_algorithm_names, int_alg, icv_len[i].icv_len);
+			found = TRUE;
+			break;
+		}
+	}
+
+	return found;
+}
 
 static bool match_route_by_subnet_ifname(iproute_t *route, host_t *subnet,
 	char *ifname)
@@ -827,7 +891,7 @@ static status_t add_decap_sa(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 	bool seq_skip = FALSE;
 	bool trailer_skip = FALSE;
 	bool use_pattern = FALSE;
-	u_int32_t icv_len = 12;
+	icv_len_t *icv = NULL;
 
 	if (!this || !sa || !this->nl_ipsec)
 	{
@@ -836,9 +900,15 @@ static status_t add_decap_sa(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 		goto errorexit;
 	}
 
+	if (!icv_len_lookup(sa->int_alg, &icv) || !icv)
+	{
+		status = FAILED;
+		goto errorexit;
+	}
+
 	status = this->nl_ipsec->add_decap_sa(this->nl_ipsec, sa->tunnel->ifname,
 		&sa->v4.src, &sa->v4.dst, sa->family, sa->v4.spi,
-		sa->v4.ttl, sa->crypto_index, icv_len, sa->nat, seq_skip,
+		sa->v4.ttl, sa->crypto_index, icv->icv_len, sa->nat, seq_skip,
 		trailer_skip, use_pattern);
 	if (status != SUCCESS)
 	{
@@ -1124,11 +1194,16 @@ static status_t add_encap_flow(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 {
 	status_t status = FAILED;
 	u_int32_t proto = 0;
-	u_int32_t icv_len = 12;
+	icv_len_t *icv = NULL;
 
 	if (!this || !sa || !src_ts || !dst_ts)
 	{
 		return INVALID_ARG;
+	}
+
+	if (!icv_len_lookup(sa->int_alg, &icv) || !icv)
+	{
+		return FAILED;
 	}
 
 	if (family == AF_INET)
@@ -1158,7 +1233,7 @@ static status_t add_encap_flow(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 		status = this->nl_ipsec->add_encap_flow(this->nl_ipsec,
 			sa->tunnel->ifname, &src, &dst, family, proto, &sa->v4.src,
 			&sa->v4.dst, sa->family, sa->v4.spi, sa->v4.ttl, sa->crypto_index,
-			icv_len, sa->nat, FALSE, FALSE, FALSE);
+			icv->icv_len, sa->nat, FALSE, FALSE, FALSE);
 	}
 	else
 	{
@@ -1175,11 +1250,16 @@ static status_t add_encap_subnet(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 {
 	status_t status = FAILED;
 	u_int32_t proto = 0;
-	u_int32_t icv_len = 12;
+	icv_len_t *icv = NULL;
 
 	if (!this || !sa || !dst_ts)
 	{
 		return INVALID_ARG;
+	}
+
+	if (!icv_len_lookup(sa->int_alg, &icv) || !icv)
+	{
+		return FAILED;
 	}
 
 	if (family == AF_INET)
@@ -1216,7 +1296,7 @@ static status_t add_encap_subnet(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 		status = this->nl_ipsec->add_encap_subnet(this->nl_ipsec,
 			sa->tunnel->ifname, &sub, &msk, family, proto, &sa->v4.src,
 			&sa->v4.dst, sa->family, sa->v4.spi, sa->v4.ttl, sa->crypto_index,
-			icv_len, sa->nat, FALSE, FALSE, FALSE);
+			icv->icv_len, sa->nat, FALSE, FALSE, FALSE);
 	}
 	else
 	{
@@ -1250,8 +1330,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 		__FUNCTION__, ipsec_mode_names, mode, protocol, spi,
 		IPSEC_DIR_STR(inbound));
 
-	if (!this || !src || !dst || !lifetime || !src_ts || !dst_ts ||
-		!enc_key.ptr || !enc_key.len || !int_key.ptr || !int_key.len)
+	if (!this || !src || !dst || !lifetime || !src_ts || !dst_ts)
 	{
 		DBG2(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
 		return INVALID_ARG;
@@ -1334,6 +1413,10 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 		.lifetime = *lifetime,
 		.mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
 		.replay_window = replay_window,
+		.enc_alg = enc_alg,
+		.enc_len = enc_key.len,
+		.int_alg = int_alg,
+		.int_len = int_key.len,
 		);
 
 	if (!sa || !sa->mutex || !sa->src || !sa->dst)

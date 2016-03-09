@@ -118,6 +118,16 @@ struct algorithm_t
 	 * NSS algorithm ID
 	 */
 	u_int32_t nss;
+
+	/**
+	 * encap skip value
+	 */
+	u_int32_t encap_skip;
+
+	/**
+	 * decap skip value
+	 */
+	u_int32_t decap_skip;
 };
 
 /**
@@ -125,10 +135,10 @@ struct algorithm_t
  */
 static algorithm_t enc_algs[] =
 {
-	{ ENCR_DES, NSS_CRYPTO_CIPHER_DES },
-	{ ENCR_3DES, NSS_CRYPTO_CIPHER_DES },
-	{ ENCR_NULL, NSS_CRYPTO_CIPHER_NULL },
-	{ ENCR_AES_CBC, NSS_CRYPTO_CIPHER_AES },
+	{ ENCR_DES, NSS_CRYPTO_CIPHER_DES, 36, 16 },
+	{ ENCR_3DES, NSS_CRYPTO_CIPHER_DES, 36, 16 },
+	{ ENCR_NULL, NSS_CRYPTO_CIPHER_NULL, 0, 0 },
+	{ ENCR_AES_CBC, NSS_CRYPTO_CIPHER_AES, 44, 24 },
 };
 
 /**
@@ -136,15 +146,17 @@ static algorithm_t enc_algs[] =
  */
 static algorithm_t int_algs[] =
 {
-	{ AUTH_HMAC_SHA1_96, NSS_CRYPTO_AUTH_SHA1_HMAC },
-	{ AUTH_HMAC_SHA2_256_128, NSS_CRYPTO_AUTH_SHA256_HMAC },
+	{ AUTH_HMAC_SHA1_96, NSS_CRYPTO_AUTH_SHA1_HMAC, 20, 0 },
+	{ AUTH_HMAC_SHA1_160, NSS_CRYPTO_AUTH_SHA1_HMAC, 20, 0 },
+	{ AUTH_HMAC_SHA2_256_96, NSS_CRYPTO_AUTH_SHA256_HMAC, 20, 0 },
+	{ AUTH_HMAC_SHA2_256_128, NSS_CRYPTO_AUTH_SHA256_HMAC, 20, 0 },
 };
 
 /**
  * Look up a crypto algorithm name and key size
  */
 static bool crypto_alg_lookup(transform_type_t type, u_int16_t ikev2,
-	u_int32_t *alg_ptr)
+	algorithm_t **alg_ptr)
 {
 	bool found = FALSE;
 	algorithm_t *list = NULL;
@@ -179,7 +191,7 @@ static bool crypto_alg_lookup(transform_type_t type, u_int16_t ikev2,
 	{
 		if (list[i].ikev2 == ikev2)
 		{
-			*alg_ptr = list[i].nss;
+			*alg_ptr = &list[i];
 			found = TRUE;
 			break;
 		}
@@ -322,12 +334,17 @@ CALLBACK(crypto_resp, void, private_fsm_netlink_crypto_t *this,
 	switch (cmd)
 	{
 		case NSS_NLCRYPTO_CMD_INFO_SESSION:
-			DBG2(DBG_KNL, "%s: cmd %u: idx %d cipher alg %d auth alg: %d",
+			DBG2(DBG_KNL,
+				"%s: cmd %u: idx %u cipher alg %u len %u auth alg %u len %u",
 				__FUNCTION__, cmd, info_ptr->session_idx, info_ptr->cipher.algo,
-				info_ptr->auth.algo);
+				info_ptr->cipher.key_len, info_ptr->auth.algo,
+				info_ptr->auth.key_len);
 
+			this->mutex->lock(this->mutex);
 			memcpy(&this->last_update_info, info_ptr, info_len);
 			this->last_sess_idx = info_ptr->session_idx;
+			this->mutex->unlock(this->mutex);
+
 			this->sem->post(this->sem);
 			break;
 
@@ -374,37 +391,37 @@ METHOD(fsm_netlink_crypto_t, add_session, status_t,
 	struct nss_nlcrypto_update_session *crypto_update = &rule.msg.update;
 	status_t status = SUCCESS;
 	bool found = FALSE;
-	u_int32_t alg = 0;
+	algorithm_t *cipher_alg = NULL;
+	algorithm_t *auth_alg = NULL;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_crypto", __FUNCTION__);
 
 	/* Sanity checks */
-	if (!this || !chunk_compare(enc_key, chunk_empty) ||
-		!chunk_compare(int_key, chunk_empty) || !sess_idx_ptr)
+	if (!this || !sess_idx_ptr)
 	{
 		DBG2(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
 		return INVALID_ARG;
 	}
 
 	/* Validate the encryption algorithm */
-	found = crypto_alg_lookup(ENCRYPTION_ALGORITHM, enc_alg, &alg);
-	if (!found)
+	found = crypto_alg_lookup(ENCRYPTION_ALGORITHM, enc_alg, &cipher_alg);
+	if (!found || !cipher_alg)
 	{
-		DBG2(DBG_KNL, "%s: encryption algorithm %u not supported",
-			__FUNCTION__, enc_alg);
+		DBG2(DBG_KNL, "%s: encryption algorithm %N not supported",
+			__FUNCTION__, encryption_algorithm_names, enc_alg);
 		return FAILED;
 	}
-	crypto_create->cipher.algo = alg;
+	crypto_create->cipher.algo = cipher_alg->nss;
 
 	/* Validate the integrity algorithm */
-	found = crypto_alg_lookup(INTEGRITY_ALGORITHM, int_alg, &alg);
-	if (!found)
+	found = crypto_alg_lookup(INTEGRITY_ALGORITHM, int_alg, &auth_alg);
+	if (!found || !auth_alg)
 	{
-		DBG2(DBG_KNL, "%s: integrity algorithm %u not supported", __FUNCTION__,
-			int_alg);
+		DBG2(DBG_KNL, "%s: integrity algorithm %N not supported", __FUNCTION__,
+			integrity_algorithm_names, int_alg);
 		return FAILED;
 	}
-	crypto_create->auth.algo = alg;
+	crypto_create->auth.algo = auth_alg->nss;
 
 	/* Validate key lengths */
 	if (enc_key.len > NSS_NLCRYPTO_MAX_KEYLEN ||
@@ -414,12 +431,22 @@ METHOD(fsm_netlink_crypto_t, add_session, status_t,
 		return FAILED;
 	}
 
-	/* Set the keys */
-	crypto_create->cipher.key_len = enc_key.len;
-	memcpy(&crypto_create->cipher_key[0], enc_key.ptr, enc_key.len);
+	/* Set the keys only if not using NULL encryption */
+	if ((enc_key.len != 0) && (enc_key.ptr != NULL))
+	{
+		crypto_create->cipher.key_len = enc_key.len;
+		memcpy(&crypto_create->cipher_key[0], enc_key.ptr, enc_key.len);
+	}
 
-	crypto_create->auth.key_len = int_key.len;
-	memcpy(&crypto_create->auth_key[0], int_key.ptr, int_key.len);
+	if ((int_key.len != 0) && (int_key.ptr != NULL))
+	{
+		crypto_create->auth.key_len = int_key.len;
+		memcpy(&crypto_create->auth_key[0], int_key.ptr, int_key.len);
+	}
+
+	DBG2(DBG_KNL, "%s: crypto cipher %N len %u auth %N len %u", __FUNCTION__,
+		encryption_algorithm_names, enc_alg, enc_key.len,
+		integrity_algorithm_names, int_alg, int_key.len);
 
 	/* Send the message */
 	status = crypto_send_msg(this, &rule, NSS_NLCRYPTO_CMD_CREATE_SESSION);
@@ -444,12 +471,19 @@ METHOD(fsm_netlink_crypto_t, add_session, status_t,
 	memset(&rule, 0, sizeof(rule));
 	crypto_update->session_idx = *sess_idx_ptr;
 	/* TODO: These numbers change when NAT is involved, fix this */
-	crypto_update->param.auth_skip = (decap) ? 0 : 20;
-	crypto_update->param.cipher_skip = (decap) ? 24 : 44;
+	crypto_update->param.auth_skip = (decap) ? auth_alg->decap_skip :
+		auth_alg->encap_skip;
+	crypto_update->param.cipher_skip = (decap) ? cipher_alg->decap_skip :
+		cipher_alg->encap_skip;
 	crypto_update->param.req_type = (uint16_t)NSS_CRYPTO_REQ_TYPE_AUTH;
 	crypto_update->param.req_type |=
 		(decap) ? (uint16_t)NSS_CRYPTO_REQ_TYPE_DECRYPT
 		: (uint16_t)NSS_CRYPTO_REQ_TYPE_ENCRYPT;
+
+	DBG2(DBG_KNL, "%s: update crypto %u auth skip %u cipher skip %u req %u",
+		__FUNCTION__, crypto_update->session_idx,
+		crypto_update->param.auth_skip, crypto_update->param.cipher_skip,
+		crypto_update->param.req_type);
 
 	status = crypto_send_msg(this, &rule, NSS_NLCRYPTO_CMD_UPDATE_SESSION);
 	if (status != SUCCESS)
