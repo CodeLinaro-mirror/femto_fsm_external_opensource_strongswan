@@ -76,6 +76,7 @@ struct fsm_netlink_ipsec_t
 	 * @param  ttl_hl		Time to Live (IPv4) or Hop Limit (IPv6)
 	 * @param  crypto_index	Crypto Index for this SA
 	 * @param  icv_len		Hash length
+	 * @param  replay_win	Anti-replay window (packets)
 	 * @param  nat			TRUE if NAT_T required
 	 * @param  seq_skip		TRUE to skip ESP sequence
 	 * @param  trailer_skip	TRUE to skip ESP trailer
@@ -86,8 +87,9 @@ struct fsm_netlink_ipsec_t
 		char ifname[IFNAMSIZ], u_int32_t *inner_src, u_int32_t *inner_dst,
 		u_int32_t inner_family, u_int32_t protocol_nh, u_int32_t *outer_src,
 		u_int32_t *outer_dst, u_int32_t outer_family, u_int32_t spi,
-		u_int32_t ttl_hl, u_int32_t crypto_index, u_int32_t icv_len,
-		bool nat, bool seq_skip, bool trailer_skip, bool use_pattern);
+		u_int32_t ttl_hl, u_int32_t crypto_index, u_int16_t icv_len,
+		u_int16_t replay_win, bool nat, bool seq_skip, bool trailer_skip,
+		bool use_pattern);
 
 	/**
 	 * Add an encapsulation rule for destination subnet (tunnel must exist)
@@ -105,6 +107,7 @@ struct fsm_netlink_ipsec_t
 	 * @param  ttl_hl			Time to Live (IPv4) or Hop Limit (IPv6)
 	 * @param  crypto_index		Crypto Index for this SA
 	 * @param  icv_len			Hash length
+	 * @param  replay_win		Anti-replay window (packets)
 	 * @param  nat				TRUE if NAT_T required
 	 * @param  seq_skip			TRUE to skip ESP sequence
 	 * @param  trailer_skip		TRUE to skip ESP trailer
@@ -115,8 +118,9 @@ struct fsm_netlink_ipsec_t
 		char ifname[IFNAMSIZ], u_int32_t *subnet, u_int32_t *mask,
 		u_int32_t subnet_family, u_int32_t protocol_nh, u_int32_t *outer_src,
 		u_int32_t *outer_dst, u_int32_t outer_family, u_int32_t spi,
-		u_int32_t ttl_hl, u_int32_t crypto_index, u_int32_t icv_len,
-		bool nat, bool seq_skip, bool trailer_skip, bool use_pattern);
+		u_int32_t ttl_hl, u_int32_t crypto_index, u_int16_t icv_len,
+		u_int16_t replay_win, bool nat, bool seq_skip, bool trailer_skip,
+		bool use_pattern);
 
 	/**
 	 * Delete an encapsulation flow for explicit hosts (tunnel and flow and must
@@ -191,6 +195,7 @@ struct fsm_netlink_ipsec_t
 	 * @param  ttl_hl		Time to Live (IPv4) or Hop Limit (IPv6)
 	 * @param  crypto_index	Crypto Index for this SA
 	 * @param  icv_len		Hash length
+	 * @param  replay_win	Anti-replay window (packets)
 	 * @param  nat			TRUE if NAT_T required
 	 * @param  seq_skip		TRUE to skip ESP sequence
 	 * @param  trailer_skip	TRUE to skip ESP trailer
@@ -200,8 +205,8 @@ struct fsm_netlink_ipsec_t
 	status_t (*add_decap_sa)(fsm_netlink_ipsec_t *this, char ifname[IFNAMSIZ],
 		u_int32_t *outer_src, u_int32_t *outer_dst, u_int32_t outer_family,
 		u_int32_t spi, u_int32_t ttl_hl, u_int32_t crypto_index,
-		u_int32_t icv_len, bool nat, bool seq_skip, bool trailer_skip,
-		bool use_pattern);
+		u_int16_t icv_len, u_int16_t replay_win, bool nat, bool seq_skip,
+		bool trailer_skip, bool use_pattern);
 
 	/**
 	 * Delete a decapsulation SA (tunnel and SA and must exist)

@@ -53,6 +53,8 @@
 #include <processing/jobs/callback_job.h>
 #include <crypto/rngs/rng.h>
 
+#define MIN_REPLAY_WINDOW 32
+#define MAX_REPLAY_WINDOW 1024
 
 #define IPSEC_DIR_STR(inbound) ((inbound) ? "inbound" : "outbound")
 
@@ -908,8 +910,9 @@ static status_t add_decap_sa(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 
 	status = this->nl_ipsec->add_decap_sa(this->nl_ipsec, sa->tunnel->ifname,
 		&sa->v4.src, &sa->v4.dst, sa->family, sa->v4.spi,
-		sa->v4.ttl, sa->crypto_index, icv->icv_len, sa->nat, seq_skip,
-		trailer_skip, use_pattern);
+		sa->v4.ttl, sa->crypto_index, icv->icv_len,
+		(u_int16_t)sa->replay_window, sa->nat, seq_skip, trailer_skip,
+		use_pattern);
 	if (status != SUCCESS)
 	{
 		DBG2(DBG_KNL, "%s: Failed to add decap rule", __FUNCTION__);
@@ -1233,7 +1236,8 @@ static status_t add_encap_flow(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 		status = this->nl_ipsec->add_encap_flow(this->nl_ipsec,
 			sa->tunnel->ifname, &src, &dst, family, proto, &sa->v4.src,
 			&sa->v4.dst, sa->family, sa->v4.spi, sa->v4.ttl, sa->crypto_index,
-			icv->icv_len, sa->nat, FALSE, FALSE, FALSE);
+			icv->icv_len, (u_int16_t)sa->replay_window, sa->nat, FALSE, FALSE,
+			FALSE);
 	}
 	else
 	{
@@ -1296,7 +1300,8 @@ static status_t add_encap_subnet(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 		status = this->nl_ipsec->add_encap_subnet(this->nl_ipsec,
 			sa->tunnel->ifname, &sub, &msk, family, proto, &sa->v4.src,
 			&sa->v4.dst, sa->family, sa->v4.spi, sa->v4.ttl, sa->crypto_index,
-			icv->icv_len, sa->nat, FALSE, FALSE, FALSE);
+			icv->icv_len, (u_int16_t)sa->replay_window, sa->nat, FALSE, FALSE,
+			FALSE);
 	}
 	else
 	{
@@ -1423,6 +1428,16 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 	{
 		DBG2(DBG_KNL, "%s: Failed to allocate mem for SPI 0x%08x %s",
 			__FUNCTION__, spi, IPSEC_DIR_STR(inbound));
+		status = FAILED;
+		goto errorexit;
+	}
+
+	if ((replay_window < MIN_REPLAY_WINDOW) ||
+		(replay_window > MAX_REPLAY_WINDOW))
+	{
+		DBG1(DBG_KNL,
+			"%s: Invalid replay window value %u. Must be %u-%u.",
+			__FUNCTION__, replay_window, MIN_REPLAY_WINDOW, MAX_REPLAY_WINDOW);
 		status = FAILED;
 		goto errorexit;
 	}
