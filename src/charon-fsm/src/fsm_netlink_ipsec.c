@@ -552,8 +552,8 @@ static status_t populate_v4_sa(struct nss_nlipsec_rule *rule_ptr,
 }
 
 static status_t populate_sa_data(struct nss_nlipsec_rule *rule_ptr,
-	u_int32_t crypto_index, u_int32_t icv_len, bool nat, bool seq_skip,
-	bool trailer_skip, bool use_pattern)
+	u_int32_t crypto_index, u_int16_t icv_len, u_int16_t replay_win, bool nat,
+	bool seq_skip, bool trailer_skip, bool use_pattern)
 {
 	status_t status = SUCCESS;
 	struct nss_ipsecmgr_sa_data *sa_data = NULL;
@@ -567,9 +567,13 @@ static status_t populate_sa_data(struct nss_nlipsec_rule *rule_ptr,
 	sa_data->crypto_index = crypto_index;
 	sa_data->use_pattern = use_pattern;
 	sa_data->esp.icv_len = icv_len;
+	sa_data->esp.replay_win = replay_win;
 	sa_data->esp.nat_t_req = nat;
 	sa_data->esp.seq_skip = seq_skip;
 	sa_data->esp.trailer_skip = trailer_skip;
+
+	DBG2(DBG_KNL, "%s: crypto %u icv_len %u replay_win %u", __FUNCTION__,
+		sa_data->crypto_index, sa_data->esp.icv_len, sa_data->esp.replay_win);
 
 	return status;
 }
@@ -579,8 +583,8 @@ METHOD(fsm_netlink_ipsec_t, add_encap_flow, status_t,
 	u_int32_t *inner_src, u_int32_t *inner_dst, u_int32_t inner_family,
 	u_int32_t protocol_nh, u_int32_t *outer_src, u_int32_t *outer_dst,
 	u_int32_t outer_family, u_int32_t spi, u_int32_t ttl_hl,
-	u_int32_t crypto_index, u_int32_t icv_len, bool nat, bool seq_skip,
-	bool trailer_skip, bool use_pattern)
+	u_int32_t crypto_index, u_int16_t icv_len, u_int16_t replay_win, bool nat,
+	bool seq_skip, bool trailer_skip, bool use_pattern)
 {
 	status_t status = SUCCESS;
 	struct nss_nlipsec_rule rule = { { 0 } };
@@ -612,8 +616,8 @@ METHOD(fsm_netlink_ipsec_t, add_encap_flow, status_t,
 		return status;
 	}
 
-	status = populate_sa_data(&rule, crypto_index, icv_len, nat, seq_skip,
-		trailer_skip, use_pattern);
+	status = populate_sa_data(&rule, crypto_index, icv_len, replay_win, nat,
+		seq_skip, trailer_skip, use_pattern);
 	if (status != SUCCESS)
 	{
 		return status;
@@ -680,8 +684,8 @@ METHOD(fsm_netlink_ipsec_t, add_encap_subnet, status_t,
 	u_int32_t *subnet, u_int32_t *mask, u_int32_t subnet_family,
 	u_int32_t protocol_nh, u_int32_t *outer_src, u_int32_t *outer_dst,
 	u_int32_t outer_family, u_int32_t spi, u_int32_t ttl_hl,
-	u_int32_t crypto_index, u_int32_t icv_len, bool nat, bool seq_skip,
-	bool trailer_skip, bool use_pattern)
+	u_int32_t crypto_index, u_int16_t icv_len, u_int16_t replay_win, bool nat,
+	bool seq_skip, bool trailer_skip, bool use_pattern)
 {
 	status_t status = SUCCESS;
 	struct nss_nlipsec_rule rule = { { 0 } };
@@ -713,8 +717,8 @@ METHOD(fsm_netlink_ipsec_t, add_encap_subnet, status_t,
 		return status;
 	}
 
-	status = populate_sa_data(&rule, crypto_index, icv_len, nat, seq_skip,
-		trailer_skip, use_pattern);
+	status = populate_sa_data(&rule, crypto_index, icv_len, replay_win, nat,
+		seq_skip, trailer_skip, use_pattern);
 	if (status != SUCCESS)
 	{
 		return status;
@@ -832,8 +836,9 @@ METHOD(fsm_netlink_ipsec_t, del_encap_sa, status_t,
 METHOD(fsm_netlink_ipsec_t, add_decap_sa, status_t,
 	private_fsm_netlink_ipsec_t *this, char ifname[IFNAMSIZ],
 	u_int32_t *outer_src, u_int32_t *outer_dst, u_int32_t outer_family,
-	u_int32_t spi, u_int32_t ttl_hl, u_int32_t crypto_index, u_int32_t icv_len,
-	bool nat, bool seq_skip, bool trailer_skip, bool use_pattern)
+	u_int32_t spi, u_int32_t ttl_hl, u_int32_t crypto_index, u_int16_t icv_len,
+	u_int16_t replay_win, bool nat, bool seq_skip, bool trailer_skip,
+	bool use_pattern)
 {
 	status_t status = SUCCESS;
 	struct nss_nlipsec_rule rule = { { 0 } };
@@ -858,8 +863,8 @@ METHOD(fsm_netlink_ipsec_t, add_decap_sa, status_t,
 		return status;
 	}
 
-	status = populate_sa_data(&rule, crypto_index, icv_len, nat, seq_skip,
-		trailer_skip, use_pattern);
+	status = populate_sa_data(&rule, crypto_index, icv_len, replay_win, nat,
+		seq_skip, trailer_skip, use_pattern);
 	if (status != SUCCESS)
 	{
 		return status;
