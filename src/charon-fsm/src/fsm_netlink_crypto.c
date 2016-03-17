@@ -128,6 +128,16 @@ struct algorithm_t
 	 * decap skip value
 	 */
 	u_int32_t decap_skip;
+
+	/**
+	 * NAT_T encap skip value
+	 */
+	u_int32_t nat_encap_skip;
+
+	/**
+	 * NAT_T decap skip value
+	 */
+	u_int32_t nat_decap_skip;
 };
 
 /**
@@ -135,10 +145,10 @@ struct algorithm_t
  */
 static algorithm_t enc_algs[] =
 {
-	{ ENCR_DES, NSS_CRYPTO_CIPHER_DES, 36, 16 },
-	{ ENCR_3DES, NSS_CRYPTO_CIPHER_DES, 36, 16 },
-	{ ENCR_NULL, NSS_CRYPTO_CIPHER_NULL, 0, 0 },
-	{ ENCR_AES_CBC, NSS_CRYPTO_CIPHER_AES, 44, 24 },
+	{ ENCR_DES, NSS_CRYPTO_CIPHER_DES, 36, 16, 44, 16 },
+	{ ENCR_3DES, NSS_CRYPTO_CIPHER_DES, 36, 16, 44, 16 },
+	{ ENCR_NULL, NSS_CRYPTO_CIPHER_NULL, 0, 0, 0, 0 },
+	{ ENCR_AES_CBC, NSS_CRYPTO_CIPHER_AES, 44, 24, 52, 24 },
 };
 
 /**
@@ -146,10 +156,10 @@ static algorithm_t enc_algs[] =
  */
 static algorithm_t int_algs[] =
 {
-	{ AUTH_HMAC_SHA1_96, NSS_CRYPTO_AUTH_SHA1_HMAC, 20, 0 },
-	{ AUTH_HMAC_SHA1_160, NSS_CRYPTO_AUTH_SHA1_HMAC, 20, 0 },
-	{ AUTH_HMAC_SHA2_256_96, NSS_CRYPTO_AUTH_SHA256_HMAC, 20, 0 },
-	{ AUTH_HMAC_SHA2_256_128, NSS_CRYPTO_AUTH_SHA256_HMAC, 20, 0 },
+	{ AUTH_HMAC_SHA1_96, NSS_CRYPTO_AUTH_SHA1_HMAC, 20, 0, 28, 0 },
+	{ AUTH_HMAC_SHA1_160, NSS_CRYPTO_AUTH_SHA1_HMAC, 20, 0, 28, 0 },
+	{ AUTH_HMAC_SHA2_256_96, NSS_CRYPTO_AUTH_SHA256_HMAC, 20, 0, 28, 0 },
+	{ AUTH_HMAC_SHA2_256_128, NSS_CRYPTO_AUTH_SHA256_HMAC, 20, 0, 28, 0 },
 };
 
 /**
@@ -470,11 +480,23 @@ METHOD(fsm_netlink_crypto_t, add_session, status_t,
 
 	memset(&rule, 0, sizeof(rule));
 	crypto_update->session_idx = *sess_idx_ptr;
-	/* TODO: These numbers change when NAT is involved, fix this */
-	crypto_update->param.auth_skip = (decap) ? auth_alg->decap_skip :
-		auth_alg->encap_skip;
-	crypto_update->param.cipher_skip = (decap) ? cipher_alg->decap_skip :
-		cipher_alg->encap_skip;
+
+	if (nat)
+	{
+		/* Set the correct auth/cipher skip values for NAT_T */
+		crypto_update->param.auth_skip = (decap) ? auth_alg->nat_decap_skip :
+			auth_alg->nat_encap_skip;
+		crypto_update->param.cipher_skip =
+			(decap) ? cipher_alg->nat_decap_skip : cipher_alg->nat_encap_skip;
+	}
+	else
+	{
+		crypto_update->param.auth_skip = (decap) ? auth_alg->decap_skip :
+			auth_alg->encap_skip;
+		crypto_update->param.cipher_skip = (decap) ? cipher_alg->decap_skip :
+			cipher_alg->encap_skip;
+	}
+
 	crypto_update->param.req_type = (uint16_t)NSS_CRYPTO_REQ_TYPE_AUTH;
 	crypto_update->param.req_type |=
 		(decap) ? (uint16_t)NSS_CRYPTO_REQ_TYPE_DECRYPT

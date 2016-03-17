@@ -40,14 +40,17 @@ struct fsm_netlink_ip_t
 	 *
 	 * @param  this			FSM netlink ip instance
 	 * @param  src			Pointer to source IP
+	 * @param  src_port		Source port number
 	 * @param  dst			Pointer to destination IP
+	 * @param  dst_port		Destination port number
 	 * @param  family		IP family (AF_INET or AF_INET6)
 	 * @param  proto		IP protocol
 	 * @param  src_ifname	Source interface name (typically tunnel name)
 	 * @param  dst_ifname	Destination interface name (actual device ifname)
 	 * @return status_t
 	 */
-	status_t (*add_flow)(fsm_netlink_ip_t *this, u_int32_t *src, u_int32_t *dst,
+	status_t (*add_flow)(fsm_netlink_ip_t *this, u_int32_t *src,
+		u_int32_t src_port, u_int32_t *dst, u_int32_t dst_port,
 		u_int32_t family, u_int8_t proto, char src_ifname[IFNAMSIZ],
 		char dst_ifname[IFNAMSIZ]);
 
@@ -56,12 +59,15 @@ struct fsm_netlink_ip_t
 	 *
 	 * @param  this		FSM netlink ip instance
 	 * @param  src		Pointer to source IP
+	 * @param  src_port	Source port number
 	 * @param  dst		Pointer to destination IP
+	 * @param  dst_port	Destination port number
 	 * @param  family	IP family (AF_INET or AF_INET6)
 	 * @param  proto	IP protocol
 	 * @return status_t
 	 */
-	status_t (*del_flow)(fsm_netlink_ip_t *this, u_int32_t *src, u_int32_t *dst,
+	status_t (*del_flow)(fsm_netlink_ip_t *this, u_int32_t *src,
+		u_int32_t src_port, u_int32_t *dst, u_int32_t dst_port,
 		u_int32_t family, u_int8_t proto);
 
 	/**

@@ -180,7 +180,9 @@ struct flow_t
 	struct
 	{
 		u_int32_t src;
+		u_int32_t src_port;
 		u_int32_t dst;
+		u_int32_t dst_port;
 		u_int32_t proto;
 	} v4_tuple;
 
@@ -756,7 +758,8 @@ static void delete_sa(sa_t *sa, private_fsm_kernel_ipsec_t *this)
 		if (sa->flow->family == AF_INET)
 		{
 			this->nl_ip->del_flow(this->nl_ip, &sa->flow->v4_tuple.src,
-				&sa->flow->v4_tuple.dst, sa->flow->family,
+				sa->flow->v4_tuple.src_port, &sa->flow->v4_tuple.dst,
+				sa->flow->v4_tuple.dst_port, sa->flow->family,
 				sa->flow->v4_tuple.proto);
 			free(sa->flow);
 			sa->flow = NULL;
@@ -962,7 +965,8 @@ static status_t add_ip_flow_rule(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 
 	/* Populate the flow structure */
 
-	flow->v4_tuple.proto = sa->protocol;
+	/* In the case of NAT_T, the protocol is UDP */
+	flow->v4_tuple.proto = (sa->nat) ? IPPROTO_UDP : sa->protocol;
 
 	addr = sa->dst->get_address(sa->dst);
 	if (!addr.ptr || !addr.len)
@@ -971,6 +975,8 @@ static status_t add_ip_flow_rule(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 		goto errorexit;
 	}
 	flow->v4_tuple.src = ntohl(*(uint32_t *)addr.ptr);
+	flow->v4_tuple.src_port =
+		(sa->nat) ? (u_int32_t)sa->dst->get_port(sa->dst) : 0;
 
 	addr = sa->src->get_address(sa->src);
 	if (!addr.ptr || !addr.len)
@@ -979,6 +985,8 @@ static status_t add_ip_flow_rule(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 		goto errorexit;
 	}
 	flow->v4_tuple.dst = ntohl(*(uint32_t *)addr.ptr);
+	flow->v4_tuple.dst_port =
+		(sa->nat) ? (u_int32_t)sa->src->get_port(sa->src) : 0;
 
 	/* Get the destination interface name */
 	valid = hydra->kernel_interface->get_interface(hydra->kernel_interface,
@@ -1005,8 +1013,8 @@ static status_t add_ip_flow_rule(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 	memcpy(src_ifname, sa->tunnel->ifname, IFNAMSIZ);
 
 	status = this->nl_ip->add_flow(this->nl_ip, &flow->v4_tuple.src,
-		&flow->v4_tuple.dst, flow->family, flow->v4_tuple.proto, src_ifname,
-		dst_ifname);
+		flow->v4_tuple.src_port, &flow->v4_tuple.dst, flow->v4_tuple.dst_port,
+		flow->family, flow->v4_tuple.proto, src_ifname, dst_ifname);
 	if (status != SUCCESS)
 	{
 		DBG2(DBG_KNL, "%s: Failed to add IP flow rule", __FUNCTION__);
@@ -1331,9 +1339,9 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 	refcount_t ref = 0;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec mode %N protocol %u "
-		"spi 0x%08x %s",
+		"spi 0x%08x %s NAT %s",
 		__FUNCTION__, ipsec_mode_names, mode, protocol, spi,
-		IPSEC_DIR_STR(inbound));
+		IPSEC_DIR_STR(inbound), (encap) ? "enabled" : "disabled");
 
 	if (!this || !src || !dst || !lifetime || !src_ts || !dst_ts)
 	{
