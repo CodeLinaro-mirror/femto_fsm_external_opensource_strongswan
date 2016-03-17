@@ -202,8 +202,8 @@ CALLBACK(ip_err, void, private_fsm_netlink_ip_t *this, void *msg)
 }
 
 static status_t add_v4_flow(private_fsm_netlink_ip_t *this,
-	u_int32_t src, u_int32_t dst, u_int8_t proto, char src_ifname[IFNAMSIZ],
-	char dst_ifname[IFNAMSIZ])
+	u_int32_t src, u_int32_t src_port, u_int32_t dst, u_int32_t dst_port,
+	u_int8_t proto, char src_ifname[IFNAMSIZ], char dst_ifname[IFNAMSIZ])
 {
 	status_t status = FAILED;
 	struct nss_nlipv4_rule v4_rule = { { 0 } };
@@ -216,8 +216,14 @@ static status_t add_v4_flow(private_fsm_netlink_ip_t *this,
 	v4_rule.nim.msg.rule_create.valid_flags |= NSS_IPV4_RULE_CREATE_CONN_VALID;
 
 	v4_tuple->flow_ip = src;
+	v4_tuple->flow_ident = src_port;
 	v4_tuple->return_ip = dst;
+	v4_tuple->return_ident = dst_port;
 	v4_tuple->protocol = proto;
+
+	DBG2(DBG_KNL, "%s: src 0x%08x port %u dst 0x%08x port %u proto %u",
+		__FUNCTION__, src, src_port, dst, dst_port, proto);
+
 
 	status = ipv4_send_msg(this, &v4_rule, NSS_IPV4_TX_CREATE_RULE_MSG);
 	if (status != SUCCESS)
@@ -231,8 +237,9 @@ static status_t add_v4_flow(private_fsm_netlink_ip_t *this,
 }
 
 METHOD(fsm_netlink_ip_t, add_flow, status_t, private_fsm_netlink_ip_t *this,
-	u_int32_t *src, u_int32_t *dst, u_int32_t family, u_int8_t proto,
-	char src_ifname[IFNAMSIZ], char dst_ifname[IFNAMSIZ])
+	u_int32_t *src, u_int32_t src_port, u_int32_t *dst, u_int32_t dst_port,
+	u_int32_t family, u_int8_t proto, char src_ifname[IFNAMSIZ],
+	char dst_ifname[IFNAMSIZ])
 {
 	status_t status = SUCCESS;
 
@@ -250,21 +257,27 @@ METHOD(fsm_netlink_ip_t, add_flow, status_t, private_fsm_netlink_ip_t *this,
 		return NOT_SUPPORTED;
 	}
 
-	status = add_v4_flow(this, *src, *dst, proto, src_ifname, dst_ifname);
+	status = add_v4_flow(this, *src, src_port, *dst, dst_port, proto,
+		src_ifname, dst_ifname);
 
 	return status;
 }
 
 static status_t del_v4_flow(private_fsm_netlink_ip_t *this, u_int32_t src,
-	u_int32_t dst, u_int8_t proto)
+	u_int32_t src_port, u_int32_t dst, u_int32_t dst_port, u_int8_t proto)
 {
 	status_t status = FAILED;
 	struct nss_nlipv4_rule v4_rule = { { 0 } };
 	struct nss_ipv4_5tuple *v4_tuple = &v4_rule.nim.msg.rule_create.tuple;
 
 	v4_tuple->flow_ip = src;
+	v4_tuple->flow_ident = src_port;
 	v4_tuple->return_ip = dst;
+	v4_tuple->return_ident = dst_port;
 	v4_tuple->protocol = proto;
+
+	DBG2(DBG_KNL, "%s: src 0x%08x port %u dst 0x%08x port %u proto %u",
+		__FUNCTION__, src, src_port, dst, dst_port, proto);
 
 	status = ipv4_send_msg(this, &v4_rule, NSS_IPV4_TX_DESTROY_RULE_MSG);
 	if (status != SUCCESS)
@@ -279,7 +292,8 @@ static status_t del_v4_flow(private_fsm_netlink_ip_t *this, u_int32_t src,
 }
 
 METHOD(fsm_netlink_ip_t, del_flow, status_t, private_fsm_netlink_ip_t *this,
-	u_int32_t *src, u_int32_t *dst, u_int32_t family, u_int8_t proto)
+	u_int32_t *src, u_int32_t src_port, u_int32_t *dst, u_int32_t dst_port,
+	u_int32_t family, u_int8_t proto)
 {
 	status_t status = SUCCESS;
 
@@ -296,7 +310,7 @@ METHOD(fsm_netlink_ip_t, del_flow, status_t, private_fsm_netlink_ip_t *this,
 		return NOT_SUPPORTED;
 	}
 
-	status = del_v4_flow(this, *src, *dst, proto);
+	status = del_v4_flow(this, *src, src_port, *dst, dst_port, proto);
 
 	return status;
 }
