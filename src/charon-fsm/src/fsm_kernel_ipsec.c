@@ -42,6 +42,7 @@
 #include "fsm_netlink_ipsec.h"
 #include "fsm_netlink_ip.h"
 #include "fsm_listener.h"
+#include "fsm_utils.h"
 
 #include <hydra.h>
 #include <utils/utils.h>
@@ -86,6 +87,11 @@ struct private_fsm_kernel_ipsec_t
 	mutex_t *routes_mutex;
 
 	/**
+	 * Mutex to lock access to installed shunts
+	 */
+	mutex_t *shunts_mutex;
+
+	/**
 	 * List of tunnels
 	 */
 	linked_list_t *tunnels;
@@ -99,6 +105,11 @@ struct private_fsm_kernel_ipsec_t
 	 * List of installed routes
 	 */
 	linked_list_t *routes;
+
+	/**
+	 * List of installed shunt routes
+	 */
+	linked_list_t *shunts;
 
 	/**
 	 * FSM Netlink Crypto object
@@ -623,40 +634,51 @@ static void schedule_expiration(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 		(entry->hard_offset ? "soft" : "hard"), timeout);
 }
 
-static void delete_route(private_fsm_kernel_ipsec_t *this, iproute_t *route)
+static status_t delete_route(iproute_t *route, mutex_t *mutex,
+	linked_list_t *list)
 {
+	status_t status = SUCCESS;
 	chunk_t addr = chunk_empty;
 
-	if (!this || !route || !this->routes_mutex || !this->routes ||
-		!route->subnet || !route->gw || !route->src_ip)
+	if (!route || !mutex || !list || !route->subnet || !route->gw ||
+		!route->src_ip)
 	{
-		return;
+		return INVALID_ARG;
 	}
 
 	/* Only delete the route if there are no more references */
 	if (!ref_put(&route->ref))
 	{
-		return;
+		return SUCCESS;
 	}
 
-	this->routes_mutex->lock(this->routes_mutex);
-	this->routes->remove(this->routes, route, NULL);
-	this->routes_mutex->unlock(this->routes_mutex);
+	mutex->lock(mutex);
+	list->remove(list, route, NULL);
+	mutex->unlock(mutex);
 	DBG2(DBG_KNL,
 		"%s: Removing route for dst_net %H prefix %u ifname %s",
 		__FUNCTION__, route->subnet, route->prefixlen, route->ifname);
 	addr = route->subnet->get_address(route->subnet);
 	if (!addr.ptr || !addr.len)
 	{
-		return;
+		return FAILED;
 	}
 
-	hydra->kernel_interface->del_route(hydra->kernel_interface, addr,
+	status = hydra->kernel_interface->del_route(hydra->kernel_interface, addr,
 		route->prefixlen, route->gw, route->src_ip, route->ifname);
+	if (status != SUCCESS)
+	{
+		DBG2(DBG_KNL,
+		"%s: Failed to remove route for dst_net %H prefix %u ifname %s",
+		__FUNCTION__, route->subnet, route->prefixlen, route->ifname);
+	}
+
 	DESTROY_IF(route->subnet);
 	DESTROY_IF(route->gw);
 	DESTROY_IF(route->src_ip);
 	free(route);
+
+	return status;
 }
 
 void flush_rules(sa_t *sa, private_fsm_kernel_ipsec_t *this)
@@ -932,7 +954,6 @@ static status_t add_ip_flow_rule(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 	chunk_t addr = chunk_empty;
 	bool valid = FALSE;
 	char *ifname = NULL;
-	size_t ifname_len = 0;
 	char src_ifname[IFNAMSIZ];
 	char dst_ifname[IFNAMSIZ];
 
@@ -998,16 +1019,14 @@ static status_t add_ip_flow_rule(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 		goto errorexit;
 	}
 
-	ifname_len = strlen(ifname);
-	/* Truncate the ifname if it's too large */
-	if (ifname_len > IFNAMSIZ)
-	{
-		ifname[ifname_len - 1] = '\0';
-		ifname_len = IFNAMSIZ;
-	}
-	memset(dst_ifname, 0, IFNAMSIZ);
-	memcpy(dst_ifname, ifname, ifname_len);
+	status = copy_ifname(dst_ifname, ifname);
 	free(ifname);
+	if (status != SUCCESS)
+	{
+		DBG2(DBG_KNL, "%s: copy_ifname failed", __FUNCTION__,
+			sa->dst);
+		goto errorexit;
+	}
 
 	/* The source interface name is the name of the tunnel */
 	memcpy(src_ifname, sa->tunnel->ifname, IFNAMSIZ);
@@ -1073,17 +1092,18 @@ errorexit:
 	return status;
 }
 
-static void add_route(private_fsm_kernel_ipsec_t *this, sa_t *sa,
-	traffic_selector_t *dst_ts)
+iproute_t *prepare_route(private_fsm_kernel_ipsec_t *this,
+	traffic_selector_t *dst_ts, char *dst_ifname)
 {
-	status_t status = FAILED;
+	status_t status = SUCCESS;
 	iproute_t *route = NULL;
-	iproute_t *listroute = NULL;
-	chunk_t addr = chunk_empty;
+	char *ifname = NULL;
+	bool valid = FALSE;
 
-	if (!this || !sa || !dst_ts || !this->routes || !this->routes_mutex)
+	if (!this || !dst_ts)
 	{
-		return;
+		DBG2(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
+		return NULL;
 	}
 
 	INIT(route,
@@ -1107,6 +1127,183 @@ static void add_route(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 		goto exitfunc;
 	}
 
+	if (route->subnet->is_anyaddr(route->subnet) || (dst_ifname != NULL))
+	{
+		/* This handles the default route and anything using the
+		 * tunnel dev, since dst_ifname is set in that case.
+		 */
+		route->gw = host_create_any(route->subnet->get_family(route->subnet));
+		if (!route->gw)
+		{
+			DBG2(DBG_KNL, "%s: Could not create gateway", __FUNCTION__);
+			status = FAILED;
+			goto exitfunc;
+		}
+
+		route->src_ip =
+			host_create_any(route->subnet->get_family(route->subnet));
+		if (!route->src_ip)
+		{
+			DBG2(DBG_KNL, "%s: Could not create src_ip", __FUNCTION__);
+			status = FAILED;
+			goto exitfunc;
+		}
+	}
+	else
+	{
+		if (dst_ts->is_host(dst_ts, NULL))
+		{
+			/* For explicit hosts, look up the next hop to use as the
+			 * gateway for the route.
+			 */
+			route->gw = hydra->kernel_interface->get_nexthop(
+				hydra->kernel_interface, route->subnet, route->prefixlen, NULL);
+			if (!route->gw)
+			{
+				DBG2(DBG_KNL, "%s: Could not create gateway", __FUNCTION__);
+				status = FAILED;
+				goto exitfunc;
+			}
+
+			/* Use the gateway to look up the local source address. */
+			route->src_ip = hydra->kernel_interface->get_source_addr(
+				hydra->kernel_interface, route->gw, NULL);
+			if (!route->src_ip)
+			{
+				DBG2(DBG_KNL, "%s: Could not get source address for gw %H",
+					__FUNCTION__, route->gw);
+				status = FAILED;
+				goto exitfunc;
+			}
+			status = SUCCESS;
+		}
+		else
+		{
+			/* See if there is an interface that has an address that falls
+			 * within this traffic selector. If so, use that address as the
+			 * source address for the route.
+			 */
+			status = hydra->kernel_interface->get_address_by_ts(
+				hydra->kernel_interface, dst_ts, &route->src_ip, NULL);
+			if ((status != SUCCESS) || !route->src_ip)
+			{
+				/* Since no local interface has an address in the ts range,
+				 * look up the next hop to use as the gateway for the route.
+				 */
+				route->gw = hydra->kernel_interface->get_nexthop(
+					hydra->kernel_interface, route->subnet, route->prefixlen,
+					NULL);
+				if (!route->gw)
+				{
+					/* Since there is no next hop found, use %any for the
+					 * source address.
+					 */
+					route->src_ip = host_create_any(
+						route->subnet->get_family(route->subnet));
+					if (!route->src_ip)
+					{
+						DBG2(DBG_KNL,
+							"%s: Could not get src address for dst_ts %R",
+							__FUNCTION__, dst_ts);
+						status = FAILED;
+						goto exitfunc;
+					}
+				}
+				else
+				{
+					/* A gateway was found, use it to look up the source
+					 * address of the interface for the route.
+					 */
+					route->src_ip = hydra->kernel_interface->get_source_addr(
+						hydra->kernel_interface, route->gw, NULL);
+					if (!route->src_ip)
+					{
+						DBG2(DBG_KNL,
+							"%s: Could not get source address for gw %H",
+							__FUNCTION__, route->gw);
+						status = FAILED;
+						goto exitfunc;
+					}
+				}
+			}
+
+			/* In case no gateway was set above, use %any. */
+			if (!route->gw)
+			{
+				route->gw =
+					host_create_any(route->subnet->get_family(route->subnet));
+				if (!route->gw)
+				{
+					DBG2(DBG_KNL, "%s: Could not create gateway", __FUNCTION__);
+					status = FAILED;
+					goto exitfunc;
+				}
+			}
+			status = SUCCESS;
+		}
+	}
+
+	if (!dst_ifname)
+	{
+		/* Look up the interface name for the source address. */
+		valid = hydra->kernel_interface->get_interface(hydra->kernel_interface,
+			route->src_ip, &ifname);
+		if (!valid || !ifname)
+		{
+			DBG2(DBG_KNL, "%s: Could not get interface name for src_ip %H",
+				__FUNCTION__, route->src_ip);
+			goto exitfunc;
+		}
+
+		status = copy_ifname(route->ifname, ifname);
+		free(ifname);
+	}
+	else
+	{
+		status = copy_ifname(route->ifname, dst_ifname);
+	}
+
+	if (status != SUCCESS)
+	{
+		DBG2(DBG_KNL, "%s: copy_ifname failed", __FUNCTION__);
+		goto exitfunc;
+	}
+
+exitfunc:
+	if (status != SUCCESS)
+	{
+		if (route)
+		{
+			free(route);
+			route = NULL;
+		}
+	}
+
+	return route;
+}
+
+static status_t install_route(private_fsm_kernel_ipsec_t *this,
+	traffic_selector_t *dst_ts, mutex_t *mutex, linked_list_t *list,
+	char *ifname)
+{
+	status_t status = SUCCESS;
+	iproute_t *route = NULL;
+	iproute_t *listroute = NULL;
+	chunk_t addr = chunk_empty;
+
+	if (!this || !dst_ts || !mutex || !list)
+	{
+		return INVALID_ARG;
+	}
+
+	route = prepare_route(this, dst_ts, ifname);
+	if (!route)
+	{
+		DBG2(DBG_KNL, "%s: Could not prepare route", __FUNCTION__);
+		status = FAILED;
+		goto exitfunc;
+	}
+
 	addr = route->subnet->get_address(route->subnet);
 	if (!addr.ptr || !addr.len)
 	{
@@ -1119,36 +1316,18 @@ static void add_route(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 	/* Check to see if this route already exists; if so, increment refcount.
 	 * If not, create it and add to the list.
 	 */
-	this->routes_mutex->lock(this->routes_mutex);
-	status = this->routes->find_first(this->routes,
+	mutex->lock(mutex);
+	status = list->find_first(list,
 		(linked_list_match_t)match_route_by_subnet_ifname, (void **)&listroute,
-		route->subnet, &sa->tunnel->ifname[0]);
-	this->routes_mutex->unlock(this->routes_mutex);
+		route->subnet, &route->ifname[0]);
+	mutex->unlock(mutex);
 
 	if ((status != SUCCESS) || !listroute)
 	{
-		/* TODO: Add IPv6 support */
-		route->gw = host_create_any(AF_INET);
-		if (!route->gw)
-		{
-			DBG2(DBG_KNL, "%s: Could not create gateway", __FUNCTION__);
-			status = FAILED;
-			goto exitfunc;
-		}
-
-		route->src_ip = host_create_any(AF_INET);
-		if (!route->src_ip)
-		{
-			DBG2(DBG_KNL, "%s: Could not create src_ip", __FUNCTION__);
-			status = FAILED;
-			goto exitfunc;
-		}
-
-		strncpy(route->ifname, sa->tunnel->ifname, IFNAMSIZ);
-
 		DBG2(DBG_KNL,
-			"%s: Adding route for dst_net %H prefix %u ifname %s",
-			__FUNCTION__, route->subnet, route->prefixlen, route->ifname);
+			"%s: Adding route for dst_net %H prefix %u gw %H src %H ifname %s",
+			__FUNCTION__, route->subnet, route->prefixlen, route->gw,
+			route->src_ip, route->ifname);
 
 		status = hydra->kernel_interface->add_route(hydra->kernel_interface,
 			addr, route->prefixlen, route->gw, route->src_ip,
@@ -1159,16 +1338,16 @@ static void add_route(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 			case SUCCESS:
 				DBG2(DBG_KNL, "%s: Installed source route for %H",
 					__FUNCTION__, route->subnet);
-				this->routes_mutex->lock(this->routes_mutex);
-				this->routes->insert_last(this->routes, route);
-				this->routes_mutex->unlock(this->routes_mutex);
+				mutex->lock(mutex);
+				list->insert_last(list, route);
+				mutex->unlock(mutex);
 				break;
 			case ALREADY_DONE:
 				DBG2(DBG_KNL, "%s: Source route for %H already installed",
 					__FUNCTION__, route->subnet);
-				this->routes_mutex->lock(this->routes_mutex);
-				this->routes->insert_last(this->routes, route);
-				this->routes_mutex->unlock(this->routes_mutex);
+				mutex->lock(mutex);
+				list->insert_last(list, route);
+				mutex->unlock(mutex);
 				status = SUCCESS;
 				break;
 			default:
@@ -1194,10 +1373,32 @@ static void add_route(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 exitfunc:
 	if (status != SUCCESS)
 	{
-		delete_route(this, route);
+		delete_route(route, mutex, list);
 	}
 
-	return;
+	return status;
+}
+
+static status_t add_route(private_fsm_kernel_ipsec_t *this, sa_t *sa,
+	traffic_selector_t *dst_ts)
+{
+	status_t status = FAILED;
+
+	if (!this || !sa || !dst_ts || !this->routes || !this->routes_mutex)
+	{
+		return INVALID_ARG;
+	}
+
+	status = install_route(this, dst_ts, this->routes_mutex, this->routes,
+		&sa->tunnel->ifname[0]);
+
+	if (status != SUCCESS)
+	{
+		DBG2(DBG_KNL, "%s: Failed to install route for %R", __FUNCTION__,
+			dst_ts);
+	}
+
+	return status;
 }
 
 static status_t add_encap_flow(private_fsm_kernel_ipsec_t *this, sa_t *sa,
@@ -1224,6 +1425,13 @@ static status_t add_encap_flow(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 		chunk_t addr = chunk_empty;
 
 		proto = dst_ts->get_protocol(dst_ts);
+		if (!proto)
+		{
+			DBG1(DBG_KNL, "%s: Protocol %u not supported for encap flows",
+				__FUNCTION__, proto);
+			status = INVALID_ARG;
+			goto exitfunc;
+		}
 
 		addr = dst_ts->get_from_address(dst_ts);
 		if (!addr.ptr || !addr.len)
@@ -1283,6 +1491,11 @@ static status_t add_encap_subnet(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 		u_int8_t mask = 0;
 
 		proto = dst_ts->get_protocol(dst_ts);
+		if (!proto)
+		{
+			/* A protocol of 0 denotes %any, which is 0xFF in NSS */
+			proto = 0xFF;
+		}
 
 		/* Prepare the destination network from the dst_ts */
 		dst_ts->to_subnet(dst_ts, &subnet, &mask);
@@ -1345,7 +1558,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 
 	if (!this || !src || !dst || !lifetime || !src_ts || !dst_ts)
 	{
-		DBG2(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
+		DBG1(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
 		return INVALID_ARG;
 	}
 
@@ -1357,7 +1570,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 
 	if (mode != MODE_TUNNEL)
 	{
-		DBG2(DBG_KNL, "%s: Mode %N and protocol %u not supported", __FUNCTION__,
+		DBG1(DBG_KNL, "%s: Mode %N and protocol %u not supported", __FUNCTION__,
 			ipsec_mode_names, mode, protocol);
 		return NOT_SUPPORTED;
 	}
@@ -1370,7 +1583,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 	this->tunnels_mutex->unlock(this->tunnels_mutex);
 	if ((status != SUCCESS) || !tunnel)
 	{
-		DBG2(DBG_KNL, "%s: Could not locate tunnel for lip %H rip %H",
+		DBG1(DBG_KNL, "%s: Could not locate tunnel for lip %H rip %H",
 			__FUNCTION__, lip, rip);
 		return FAILED;
 	}
@@ -1434,7 +1647,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 
 	if (!sa || !sa->mutex || !sa->src || !sa->dst)
 	{
-		DBG2(DBG_KNL, "%s: Failed to allocate mem for SPI 0x%08x %s",
+		DBG1(DBG_KNL, "%s: Failed to allocate mem for SPI 0x%08x %s",
 			__FUNCTION__, spi, IPSEC_DIR_STR(inbound));
 		status = FAILED;
 		goto errorexit;
@@ -1459,7 +1672,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 	status = add_crypto_rule(this, sa, enc_alg, enc_key, int_alg, int_key);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: Crypto setup failed for SPI 0x%08x %s",
+		DBG1(DBG_KNL, "%s: Crypto setup failed for SPI 0x%08x %s",
 			__FUNCTION__, spi, IPSEC_DIR_STR(inbound));
 		goto errorexit;
 	}
@@ -1495,7 +1708,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 		status = add_decap_sa(this, sa);
 		if (status != SUCCESS)
 		{
-			DBG2(DBG_KNL, "%s: Failed to add decap rule for SPI 0x%08x %s",
+			DBG1(DBG_KNL, "%s: Failed to add decap rule for SPI 0x%08x %s",
 				__FUNCTION__, spi, IPSEC_DIR_STR(inbound));
 			goto delsa;
 		}
@@ -1506,7 +1719,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 			status = add_ip_flow_rule(this, sa);
 			if (status != SUCCESS)
 			{
-				DBG2(DBG_KNL, "%s: Failed to add flow rule for SPI 0x%08x %s",
+				DBG1(DBG_KNL, "%s: Failed to add flow rule for SPI 0x%08x %s",
 					__FUNCTION__, spi, IPSEC_DIR_STR(inbound));
 				goto delsa;
 			}
@@ -1517,7 +1730,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 			status = migrate_ip_flow_rule(this, rekeysa, sa);
 			if (status != SUCCESS)
 			{
-				DBG2(DBG_KNL,
+				DBG1(DBG_KNL,
 					"%s: Failed to migrate flow rule from SPI 0x%08x to "
 					"SPI 0x%08x %s",
 					__FUNCTION__, rekeysa->spi, spi, IPSEC_DIR_STR(inbound));
@@ -1540,7 +1753,13 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 			/* For each destination traffic selector, install a route. */
 			while (enumerator->enumerate(enumerator, &ts))
 			{
-				add_route(this, sa, ts);
+				status = add_route(this, sa, ts);
+				if (status != SUCCESS)
+				{
+					DBG1(DBG_KNL, "%s: Failed to add route for %R",
+						__FUNCTION__, ts);
+					goto delsa;
+				}
 			}
 			enumerator->destroy(enumerator);
 		}
@@ -1565,7 +1784,6 @@ errorexit:
 	free(sa);
 	return FAILED;
 }
-
 
 METHOD(kernel_ipsec_t, update_sa, status_t,
 	private_fsm_kernel_ipsec_t *this, u_int32_t spi, u_int8_t protocol,
@@ -1628,6 +1846,85 @@ METHOD(kernel_ipsec_t, query_sa, status_t,
 	return status;
 }
 
+
+static status_t delete_shunt(private_fsm_kernel_ipsec_t *this,
+	traffic_selector_t *dst_ts)
+{
+	status_t status = SUCCESS;
+	iproute_t *route = NULL;
+	iproute_t *listroute = NULL;
+
+	if (!this || !dst_ts)
+	{
+		return INVALID_ARG;
+	}
+
+	route = prepare_route(this, dst_ts, NULL);
+	if (!route)
+	{
+		DBG2(DBG_KNL, "%s: Could not prepare route for %R", __FUNCTION__,
+			dst_ts);
+		status = FAILED;
+		goto exitfunc;
+	}
+
+	/* If there is a route installed for this policy, remove it. */
+	this->shunts_mutex->lock(this->shunts_mutex);
+	status = this->shunts->find_first(this->shunts,
+		(linked_list_match_t)match_route_by_subnet_ifname, (void **)&listroute,
+		route->subnet, &route->ifname[0]);
+	this->shunts_mutex->unlock(this->routes_mutex);
+
+	if ((status == SUCCESS) && listroute)
+	{
+		status = delete_route(listroute, this->shunts_mutex, this->shunts);
+		if (status != SUCCESS)
+		{
+			DBG2(DBG_KNL, "%s: Failed to delete route for %R", __FUNCTION__,
+				dst_ts);
+			goto exitfunc;
+		}
+	}
+
+exitfunc:
+	if (route)
+	{
+		DESTROY_IF(route->src_ip);
+		DESTROY_IF(route->gw);
+		DESTROY_IF(route->subnet);
+		free(route);
+	}
+	return status;
+}
+
+static status_t add_shunt(private_fsm_kernel_ipsec_t *this,
+	traffic_selector_t *dst_ts)
+{
+	status_t status = SUCCESS;
+
+	if (!this || !dst_ts)
+	{
+		return INVALID_ARG;
+	}
+
+	DBG2(DBG_KNL, "%s: Installing shunt for %R", __FUNCTION__, dst_ts);
+
+	if (!this || !dst_ts || !this->shunts || !this->shunts_mutex)
+	{
+		return INVALID_ARG;
+	}
+
+	status = install_route(this, dst_ts, this->shunts_mutex, this->shunts,
+		NULL);
+	if (status != SUCCESS)
+	{
+		DBG2(DBG_KNL, "%s: Failed to install route for %R", __FUNCTION__,
+			dst_ts);
+	}
+
+	return status;
+}
+
 METHOD(kernel_ipsec_t, add_policy, status_t,
 	private_fsm_kernel_ipsec_t *this, host_t *src, host_t *dst,
 	traffic_selector_t *src_ts, traffic_selector_t *dst_ts,
@@ -1638,12 +1935,19 @@ METHOD(kernel_ipsec_t, add_policy, status_t,
 	sa_t *currsa = NULL;
 	u_int32_t ts_family = AF_INET;
 
-	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec dir %R===%R %N type %u",
-		__FUNCTION__, src_ts, dst_ts, policy_dir_names, direction, type);
+	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec src %H dst %H ts %R===%R dir"
+		" %N type %u prio %u", __FUNCTION__, src, dst, src_ts, dst_ts,
+		policy_dir_names, direction, type, priority);
 
 	if (!this || !src || !dst || !src_ts || !dst_ts || !sa || !this->sas_mutex)
 	{
 		return INVALID_ARG;
+	}
+
+	if ((direction == POLICY_OUT) && (type == POLICY_PASS))
+	{
+		/* Install a shunt policy */
+		return add_shunt(this, dst_ts);
 	}
 
 	/* We only handle the outbound (encap) policies here. */
@@ -1725,6 +2029,12 @@ METHOD(kernel_ipsec_t, del_policy, status_t,
 		return INVALID_ARG;
 	}
 
+	/* Handle shunt policies */
+	if ((direction == POLICY_OUT) && (type == POLICY_PASS))
+	{
+		return delete_shunt(this, dst_ts);
+	}
+
 	/* We only handle the outbound (encap) IPSEC ESP tunnel policies here. */
 	if ((direction != POLICY_OUT) || (type != POLICY_IPSEC) ||
 		!sa->esp.use || (sa->mode != MODE_TUNNEL))
@@ -1767,7 +2077,12 @@ METHOD(kernel_ipsec_t, del_policy, status_t,
 
 	if ((status == SUCCESS) && route)
 	{
-		delete_route(this, route);
+		status = delete_route(route, this->routes_mutex, this->routes);
+		if (status != SUCCESS)
+		{
+			DBG2(DBG_KNL, "%s: Failed to delete route for %R", __FUNCTION__,
+				dst_ts);
+		}
 	}
 
 exitfunc:
@@ -2098,6 +2413,8 @@ METHOD(kernel_ipsec_t, destroy, void, private_fsm_kernel_ipsec_t *this)
 	DESTROY_IF(this->sas_mutex);
 	DESTROY_IF(this->routes);
 	DESTROY_IF(this->routes_mutex);
+	DESTROY_IF(this->shunts);
+	DESTROY_IF(this->shunts_mutex);
 	DESTROY_IF(this->nl_crypto);
 	DESTROY_IF(this->nl_ipsec);
 	DESTROY_IF(this->nl_ip);
@@ -2151,6 +2468,8 @@ fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
 		.sas_mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
 		.routes = linked_list_create(),
 		.routes_mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
+		.shunts = linked_list_create(),
+		.shunts_mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
 		.rng = lib->crypto->create_rng(lib->crypto, RNG_WEAK),
 		);
 

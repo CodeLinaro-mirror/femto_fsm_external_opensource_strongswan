@@ -507,6 +507,8 @@ static status_t populate_v4_encap_flow(struct nss_nlipsec_rule *rule_ptr,
 	v4_tuple->dst_ip = inner_dst;
 	v4_tuple->protocol = proto;
 
+	DBG2(DBG_KNL, "%s: src 0x%08x dst 0x%08x proto %u", __FUNCTION__,
+		inner_src, inner_dst, proto);
 	return status;
 }
 
@@ -527,6 +529,8 @@ static status_t populate_v4_encap_subnet(struct nss_nlipsec_rule *rule_ptr,
 	v4_subnet->dst_mask = mask;
 	v4_subnet->protocol = proto;
 
+	DBG2(DBG_KNL, "%s: subnet 0x%08x mask 0x%08x proto %u", __FUNCTION__,
+		subnet, mask, proto);
 	return status;
 }
 

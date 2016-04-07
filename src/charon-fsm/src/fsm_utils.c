@@ -27,9 +27,12 @@
  * IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <net/if.h>
 #include <utils/debug.h>
 #include <utils/utils.h>
 #include <utils/chunk.h>
+
+#include "fsm_utils.h"
 
 bool has_sign_byte(chunk_t chunk)
 {
@@ -46,3 +49,32 @@ bool has_sign_byte(chunk_t chunk)
 	return result;
 }
 
+status_t copy_ifname(char *dst_ifname, char *src_ifname)
+{
+	status_t status = SUCCESS;
+	size_t ifname_len = 0;
+
+	if (!dst_ifname || !src_ifname)
+	{
+		return INVALID_ARG;
+	}
+
+	ifname_len = strlen(src_ifname);
+	if (ifname_len > IFNAMSIZ)
+	{
+		ifname_len = IFNAMSIZ;
+	}
+	memcpy(dst_ifname, src_ifname, ifname_len);
+
+	/* Terminate the ifname properly */
+	if (ifname_len == IFNAMSIZ)
+	{
+		dst_ifname[IFNAMSIZ - 1] = '\0';
+	}
+	else
+	{
+		dst_ifname[ifname_len] = '\0';
+	}
+
+	return status;
+}
