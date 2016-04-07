@@ -41,4 +41,16 @@
  * @return bool - TRUE if sign byte exists, FALSE if not.
  */
 bool has_sign_byte(chunk_t chunk);
+
+/**
+ * copy_ifname - Helper function to copy ifname
+ * NOTE: Assumes the dst_ifname is at least IFNAMSIZ bytes.
+ *
+ * @param dst_ifname - Pointer to destination ifname
+ * @param src_ifname - Pointer to source ifname
+ *
+ * @return status_t	- SUCCESS or INVALID_ARG, if either ifname is NULL
+ */
+status_t copy_ifname(char *dst_ifname, char *src_ifname);
+
 #endif /** FSM_UTILS_H_ @}*/

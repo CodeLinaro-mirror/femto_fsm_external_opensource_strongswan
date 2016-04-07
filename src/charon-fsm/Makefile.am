@@ -27,7 +27,12 @@ AM_CPPFLAGS = \
 	-I$(top_srcdir)/src/charon-fsm/include \
 	-DIPSEC_DIR=\"${ipsecdir}\" \
 	-DIPSEC_PIDDIR=\"${piddir}\" \
-	-DPLUGINS=\""${charon_plugins}\""
+	-DPLUGINS=\""${charon_plugins}\"" \
+	-DROUTING_TABLE=${routing_table} \
+	-DROUTING_TABLE_PRIO=${routing_table_prio}
+
+AM_CFLAGS = \
+	$(PLUGIN_CFLAGS)
 
 AM_LDFLAGS = $(QCT_LDFLAGS)
 
