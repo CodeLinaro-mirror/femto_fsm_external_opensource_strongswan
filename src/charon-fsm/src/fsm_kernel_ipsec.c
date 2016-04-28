@@ -1873,7 +1873,7 @@ static status_t delete_shunt(private_fsm_kernel_ipsec_t *this,
 	status = this->shunts->find_first(this->shunts,
 		(linked_list_match_t)match_route_by_subnet_ifname, (void **)&listroute,
 		route->subnet, &route->ifname[0]);
-	this->shunts_mutex->unlock(this->routes_mutex);
+	this->shunts_mutex->unlock(this->shunts_mutex);
 
 	if ((status == SUCCESS) && listroute)
 	{
@@ -2177,6 +2177,7 @@ METHOD(fsm_kernel_ipsec_t, create_tunnel, status_t,
 	tunnel_t *tunnel = NULL;
 	enumerator_t *enumerator = NULL;
 	host_t *vip = NULL;
+	host_t *host = NULL;
 	status_t status = FAILED;
 	fsm_kernel_net_t *net = fsm_kernel_net_get_instance();
 	u_int32_t ike_sa_id = 0;
@@ -2235,14 +2236,38 @@ METHOD(fsm_kernel_ipsec_t, create_tunnel, status_t,
 	status = this->nl_ipsec->create_tunnel(this->nl_ipsec, tunnel->ifname);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: Could not create tunnel", __FUNCTION__);
-		free(tunnel);
+		DBG1(DBG_KNL, "%s: Could not create tunnel", __FUNCTION__);
 		tunnel->mutex->unlock(tunnel->mutex);
+		free(tunnel);
 		return status;
 	}
 
 	DBG2(DBG_KNL, "%s: Created tunnel %s for IKE SA %d",
 		__FUNCTION__, tunnel->ifname, tunnel->ike_sa_id);
+
+	/* Save the local and remote IPs for this tunnel */
+	host = ike_sa->get_my_host(ike_sa);
+	tunnel->lip = host->clone(host);
+	host = ike_sa->get_other_host(ike_sa);
+	tunnel->rip = host->clone(host);
+
+	/* Add it to the tunnel list */
+	this->tunnels_mutex->lock(this->tunnels_mutex);
+	this->tunnels->insert_last(this->tunnels, tunnel);
+	this->tunnels_mutex->unlock(this->tunnels_mutex);
+
+	/* Admin the interface up */
+	status = net->activate_iface(net, tunnel->ifname);
+	if (status != SUCCESS)
+	{
+		DBG1(DBG_KNL, "%s: Could not activate %s", __FUNCTION__,
+			tunnel->ifname);
+		destroy_tunnel(this, tunnel);
+		return status;
+	}
+
+	DBG2(DBG_KNL, "%s: Activated %s", __FUNCTION__,
+		tunnel->ifname);
 
 	/* Assign the virtual IP */
 	enumerator = ike_sa->create_virtual_ip_enumerator(ike_sa, TRUE);
@@ -2253,8 +2278,6 @@ METHOD(fsm_kernel_ipsec_t, create_tunnel, status_t,
 			/* This code currently assumes only one vip is ever assigned */
 			if (!vip->is_anyaddr(vip))
 			{
-				host_t *host = NULL;
-
 				/* Add new ip */
 				status = hydra->kernel_interface->add_ip(
 					hydra->kernel_interface, vip, -1, tunnel->ifname);
@@ -2270,32 +2293,12 @@ METHOD(fsm_kernel_ipsec_t, create_tunnel, status_t,
 				/* Save virtual ip to tunnel */
 				tunnel->vip = vip->clone(vip);
 
-				/* Save the local and remote IPs for this tunnel */
-				host = ike_sa->get_my_host(ike_sa);
-				tunnel->lip = host->clone(host);
-				host = ike_sa->get_other_host(ike_sa);
-				tunnel->rip = host->clone(host);
-
-				/* Add it to the tunnel list */
-				this->tunnels_mutex->lock(this->tunnels_mutex);
-				this->tunnels->insert_last(this->tunnels, tunnel);
-				this->tunnels_mutex->unlock(this->tunnels_mutex);
-
-				/* Admin the interface up */
-				status = net->activate_iface(net, tunnel->ifname);
-				if (status != SUCCESS)
-				{
-					DBG2(DBG_KNL, "%s: Could not activate %s", __FUNCTION__,
-						tunnel->ifname);
-					status = SUCCESS;
-				}
-				DBG2(DBG_KNL, "%s: Activated %s", __FUNCTION__,
-					tunnel->ifname);
 				break;
 			}
 		}
 		enumerator->destroy(enumerator);
 	}
+
 	tunnel->mutex->unlock(tunnel->mutex);
 
 	return status;
