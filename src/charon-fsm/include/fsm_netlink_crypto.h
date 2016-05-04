@@ -49,14 +49,15 @@ struct fsm_netlink_crypto_t
 	 * @param  enc_key		Chunk containing encryption key and length
 	 * @param  int_alg		Integrity algorithm
 	 * @param  int_key		Chunk containing integrity key and length
+	 * @param  family		IP family (AF_INET or AF_INET6)
 	 * @param  nat			TRUE if NAT_T is required
 	 * @param  decap		TRUE if this is a decap SA
 	 * @param  sess_idx_ptr	[out] location to store session index
 	 * @return status_t
 	 */
 	status_t (*add_session)(fsm_netlink_crypto_t *this, u_int16_t enc_alg,
-		chunk_t enc_key, u_int16_t int_alg, chunk_t int_key, bool nat,
-		bool decap, u_int32_t *sess_idx_ptr);
+		chunk_t enc_key, u_int16_t int_alg, chunk_t int_key, u_int32_t family,
+		bool nat, bool decap, u_int32_t *sess_idx_ptr);
 
 	/**
 	 * Delete an existing crypto session (previously added with add_session)

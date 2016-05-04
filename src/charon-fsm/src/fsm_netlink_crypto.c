@@ -304,8 +304,8 @@ CALLBACK(crypto_err, void, private_fsm_netlink_crypto_t *this, void *msg)
 		this->err_sem->post(this->err_sem);
 	}
 
-	DBG2(DBG_KNL, "%s: Error received -- %s", __FUNCTION__,
-		strerror_safe(nlerr->error));
+	DBG2(DBG_KNL, "%s: Error received (%d) -- %s", __FUNCTION__,
+		nlerr->error, strerror_safe(-nlerr->error));
 }
 
 /**
@@ -393,7 +393,7 @@ METHOD(fsm_netlink_crypto_t, del_session, status_t,
 
 METHOD(fsm_netlink_crypto_t, add_session, status_t,
 	private_fsm_netlink_crypto_t *this, u_int16_t enc_alg, chunk_t enc_key,
-	u_int16_t int_alg, chunk_t int_key, bool nat, bool decap,
+	u_int16_t int_alg, chunk_t int_key, u_int32_t family, bool nat, bool decap,
 	u_int32_t *sess_idx_ptr)
 {
 	struct nss_nlcrypto_rule rule = { { 0 } };
@@ -413,13 +413,19 @@ METHOD(fsm_netlink_crypto_t, add_session, status_t,
 		return INVALID_ARG;
 	}
 
+	if ((family != AF_INET) && (family != AF_INET6))
+	{
+		DBG2(DBG_KNL, "%s: IP family %u not supported", __FUNCTION__, family);
+		return NOT_SUPPORTED;
+	}
+
 	/* Validate the encryption algorithm */
 	found = crypto_alg_lookup(ENCRYPTION_ALGORITHM, enc_alg, &cipher_alg);
 	if (!found || !cipher_alg)
 	{
 		DBG2(DBG_KNL, "%s: encryption algorithm %N not supported",
 			__FUNCTION__, encryption_algorithm_names, enc_alg);
-		return FAILED;
+		return NOT_SUPPORTED;
 	}
 	crypto_create->cipher.algo = cipher_alg->nss;
 
@@ -429,7 +435,7 @@ METHOD(fsm_netlink_crypto_t, add_session, status_t,
 	{
 		DBG2(DBG_KNL, "%s: integrity algorithm %N not supported", __FUNCTION__,
 			integrity_algorithm_names, int_alg);
-		return FAILED;
+		return NOT_SUPPORTED;
 	}
 	crypto_create->auth.algo = auth_alg->nss;
 
@@ -501,6 +507,13 @@ METHOD(fsm_netlink_crypto_t, add_session, status_t,
 	crypto_update->param.req_type |=
 		(decap) ? (uint16_t)NSS_CRYPTO_REQ_TYPE_DECRYPT
 		: (uint16_t)NSS_CRYPTO_REQ_TYPE_ENCRYPT;
+
+	if (!decap && (family == AF_INET6))
+	{
+		/* Account for the extra IPv6 header bytes */
+		crypto_update->param.auth_skip += 20;
+		crypto_update->param.cipher_skip += 20;
+	}
 
 	DBG2(DBG_KNL, "%s: update crypto %u auth skip %u cipher skip %u req %u",
 		__FUNCTION__, crypto_update->session_idx,

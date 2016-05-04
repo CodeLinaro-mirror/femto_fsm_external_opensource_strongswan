@@ -122,9 +122,14 @@ struct private_fsm_kernel_ipsec_t
 	fsm_netlink_ipsec_t *nl_ipsec;
 
 	/**
-	 * FSM Netlink IP object
+	 * FSM Netlink IPv4 object
 	 */
-	fsm_netlink_ip_t *nl_ip;
+	fsm_netlink_ip_t *nl_ipv4;
+
+	/**
+	 * FSM Netlink IPv6 object
+	 */
+	fsm_netlink_ip_t *nl_ipv6;
 
 	/**
 	 * Random number generator
@@ -135,6 +140,11 @@ struct private_fsm_kernel_ipsec_t
 	 * Bus listener
 	 */
 	fsm_listener_t *listener;
+
+	/**
+	 * whether to actually install virtual IPs
+	 */
+	bool install_virtual_ip;
 };
 
 typedef struct iproute_t iproute_t;
@@ -181,23 +191,21 @@ struct flow_t
 	refcount_t ref;
 
 	/**
-	 * IP family (AF_INET or AF_INET6)
-	 */
-	u_int32_t family;
-
-	/**
-	 * IPv4 flow rule tuple
+	 * flow rule tuple
 	 */
 	struct
 	{
-		u_int32_t src;
+		u_int32_t src[4];
 		u_int32_t src_port;
-		u_int32_t dst;
+		u_int32_t dst[4];
 		u_int32_t dst_port;
 		u_int32_t proto;
-	} v4_tuple;
+	} tuple;
 
-	/* TODO: Add IPv6 support */
+	/**
+	 * FSM Netlink IP object pointer
+	 */
+	fsm_netlink_ip_t *nl_ip;
 };
 
 typedef struct tunnel_t tunnel_t;
@@ -320,15 +328,15 @@ struct sa_t
 	u_int32_t family;
 
 	/**
-	 * IPv4 encap/decap SA rule
+	 * IPv4/IPv6 SA rule
 	 */
 	struct
 	{
-		u_int32_t src;
-		u_int32_t dst;
+		u_int32_t src[4];
+		u_int32_t dst[4];
 		u_int32_t spi;
-		u_int32_t ttl;
-	} v4;
+		u_int32_t ttl_hl;
+	} rule;
 
 	/**
 	 * Encryption algorithm
@@ -349,8 +357,6 @@ struct sa_t
 	 * Integrity key length
 	 */
 	u_int32_t int_len;
-
-	/* TODO: Add IPv6 support */
 };
 
 /**
@@ -691,29 +697,37 @@ void flush_rules(sa_t *sa, private_fsm_kernel_ipsec_t *this)
 	}
 
 	sa->mutex->lock(sa->mutex);
+	if (sa->decap)
+	{
+		status = this->nl_ipsec->del_decap_sa(this->nl_ipsec,
+			sa->tunnel->ifname, &sa->rule.src[0], &sa->rule.dst[0], sa->family,
+			sa->rule.spi, sa->rule.ttl_hl);
+	}
+	else
+	{
+		status = this->nl_ipsec->del_encap_sa(this->nl_ipsec,
+			sa->tunnel->ifname, &sa->rule.src[0], &sa->rule.dst[0], sa->family,
+			sa->rule.spi, sa->rule.ttl_hl);
+	}
+
 	if (sa->family == AF_INET)
 	{
-		if (sa->decap)
-		{
-			status = this->nl_ipsec->del_decap_sa(this->nl_ipsec,
-				sa->tunnel->ifname, &sa->v4.src, &sa->v4.dst, sa->family,
-				sa->v4.spi, sa->v4.ttl);
-		}
-		else
-		{
-			status = this->nl_ipsec->del_encap_sa(this->nl_ipsec,
-				sa->tunnel->ifname, &sa->v4.src, &sa->v4.dst, sa->family,
-				sa->v4.spi, sa->v4.ttl);
-		}
-
 		DBG2(DBG_KNL, "%s: %s %s rule for SPI 0x%08x src 0x%08x dst 0x%08x",
 			__FUNCTION__,
 			((status != SUCCESS) ? "Could not delete" : "Deleted"),
-			(sa->decap ? "decap" : "encap"), sa->v4.spi, sa->v4.src,
-			sa->v4.dst);
+			(sa->decap ? "decap" : "encap"), sa->rule.spi, sa->rule.src[0],
+			sa->rule.dst[0]);
 	}
-
-	/* TODO: Add IPv6 support */
+	else
+	{
+		DBG2(DBG_KNL,
+			"%s: %s %s rule for SPI 0x%08x src %08x:%08x:%08x:%08x "
+			"dst %08x:%08x:%08x:%08x", __FUNCTION__,
+			((status != SUCCESS) ? "Could not delete" : "Deleted"),
+			(sa->decap ? "decap" : "encap"), sa->rule.spi, sa->rule.src[0],
+			sa->rule.src[1], sa->rule.src[2], sa->rule.src[3], sa->rule.dst[0],
+			sa->rule.dst[1], sa->rule.dst[2], sa->rule.dst[3]);
+	}
 
 	sa->mutex->unlock(sa->mutex);
 }
@@ -775,18 +789,13 @@ static void delete_sa(sa_t *sa, private_fsm_kernel_ipsec_t *this)
 	flush_rules(sa, this);
 
 	/* Delete flow rule (if applicable) */
-	if (sa->flow && ref_put(&sa->flow->ref))
+	if (sa->flow && ref_put(&sa->flow->ref) && sa->flow->nl_ip)
 	{
-		if (sa->flow->family == AF_INET)
-		{
-			this->nl_ip->del_flow(this->nl_ip, &sa->flow->v4_tuple.src,
-				sa->flow->v4_tuple.src_port, &sa->flow->v4_tuple.dst,
-				sa->flow->v4_tuple.dst_port, sa->flow->family,
-				sa->flow->v4_tuple.proto);
-			free(sa->flow);
-			sa->flow = NULL;
-		}
-		/* TODO: Add IPv6 support */
+		sa->flow->nl_ip->del_flow(sa->flow->nl_ip, &sa->flow->tuple.src[0],
+			sa->flow->tuple.src_port, &sa->flow->tuple.dst[0],
+			sa->flow->tuple.dst_port, sa->flow->tuple.proto);
+		free(sa->flow);
+		sa->flow = NULL;
 	}
 
 	/* Delete the crypto rule */
@@ -833,12 +842,13 @@ METHOD(kernel_ipsec_t, del_sa, status_t,
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec protocol %u spi 0x%08x",
 		__FUNCTION__, protocol, spi);
 
+	this->sas_mutex->lock(this->sas_mutex);
 	if (!this->sas)
 	{
+		this->sas_mutex->unlock(this->sas_mutex);
 		return INVALID_ARG;
 	}
 
-	this->sas_mutex->lock(this->sas_mutex);
 	status = this->sas->find_first(this->sas,
 		(linked_list_match_t)match_sa_by_spi_and_ips,
 		(void **)&sa, &spi, src, dst);
@@ -853,36 +863,140 @@ METHOD(kernel_ipsec_t, del_sa, status_t,
 	return status;
 }
 
-static status_t populate_v4_sa(sa_t *sa)
+#define IP_ADDR_LEN(family) ((family == AF_INET) ? 4 : 16)
+
+static status_t populate_addr_from_ts(u_int32_t family, traffic_selector_t *ts,
+	u_int32_t *addr_ptr)
 {
-	status_t status = SUCCESS;
 	chunk_t addr = chunk_empty;
 
-	if (!sa)
+	if (!addr_ptr || !ts)
+	{
+		return INVALID_ARG;
+	}
+
+	addr = ts->get_from_address(ts);
+	if (!addr.ptr || !addr.len)
+	{
+		DBG2(DBG_KNL, "%s: get_address failed for %R", __FUNCTION__, ts);
+		return FAILED;
+	}
+
+	if (addr.len != IP_ADDR_LEN(family))
+	{
+		DBG2(DBG_KNL, "%s: invalid address length %u, expected %u",
+			__FUNCTION__, addr.len, IP_ADDR_LEN(family));
+		return FAILED;
+	}
+
+	/* The address is natively in network byte order when returned
+	 * from ts>get_from_address(ts), so we need to translate to
+	 * host order.
+	 */
+	if (family == AF_INET)
+	{
+		*addr_ptr = ntohl(*(uint32_t *)addr.ptr);
+	}
+	else
+	{
+		u_int32_t *ptr;
+		u_int8_t i;
+		size_t len = IP_ADDR_LEN(family) / sizeof(u_int32_t);
+
+		ptr = (u_int32_t *)addr.ptr;
+		for(i = 0; i < len; i++)
+		{
+#if BYTE_ORDER == LITTLE_ENDIAN
+			addr_ptr[(len - i - 1)] = ntohl(ptr[i]);
+#else
+			addr_ptr[i] = ptr[i];
+#endif
+		}
+	}
+
+	return SUCCESS;
+}
+
+static status_t populate_addr_from_host(u_int32_t family, host_t *host,
+	u_int32_t *addr_ptr)
+{
+	chunk_t addr = chunk_empty;
+
+	if (!addr_ptr || !host)
+	{
+		return INVALID_ARG;
+	}
+
+	addr = host->get_address(host);
+	if (!addr.ptr || !addr.len)
+	{
+		DBG2(DBG_KNL, "%s: get_address failed for %H", __FUNCTION__, host);
+		return FAILED;
+	}
+
+	if (addr.len != IP_ADDR_LEN(family))
+	{
+		DBG2(DBG_KNL, "%s: invalid address length %u, expected %u",
+			__FUNCTION__, addr.len, IP_ADDR_LEN(family));
+		return FAILED;
+	}
+
+	/* The address is natively in network byte order when returned
+	 * from host->get_address(host), so we need to translate to
+	 * host order.
+	 */
+	if (family == AF_INET)
+	{
+		*addr_ptr = ntohl(*(uint32_t *)addr.ptr);
+	}
+	else
+	{
+		u_int32_t *ptr;
+		u_int8_t i;
+		size_t len = IP_ADDR_LEN(family) / sizeof(u_int32_t);
+
+		ptr = (u_int32_t *)addr.ptr;
+		for(i = 0; i < len; i++)
+		{
+#if BYTE_ORDER == LITTLE_ENDIAN
+			addr_ptr[(len - i - 1)] = ntohl(ptr[i]);
+#else
+			addr_ptr[i] = ptr[i];
+#endif
+		}
+	}
+
+	return SUCCESS;
+}
+
+static status_t populate_sa(sa_t *sa)
+{
+	status_t status = SUCCESS;
+
+	if (!sa || !sa->src || !sa->dst)
 	{
 		status = INVALID_ARG;
 		goto exitfunc;
 	}
 
-	addr = sa->src->get_address(sa->src);
-	if (!addr.ptr || !addr.len)
+	DBG3(DBG_KNL, "%s: src %H dst %H family %s", __FUNCTION__,  sa->src,
+		sa->dst, ((sa->family == AF_INET) ? "AF_INET" : "AF_INET6"));
+
+	status = populate_addr_from_host(sa->family, sa->src, &sa->rule.src[0]);
+	if (status != SUCCESS)
 	{
-		status = FAILED;
 		goto exitfunc;
 	}
-	sa->v4.src = ntohl(*(uint32_t *)addr.ptr);
 
-	addr = sa->dst->get_address(sa->dst);
-	if (!addr.ptr || !addr.len)
+	status = populate_addr_from_host(sa->family, sa->dst, &sa->rule.dst[0]);
+	if (status != SUCCESS)
 	{
-		status = FAILED;
 		goto exitfunc;
 	}
-	sa->v4.dst = ntohl(*(uint32_t *)addr.ptr);
 
-	sa->v4.spi = ntohl(sa->spi);
+	sa->rule.spi = ntohl(sa->spi);
 	/* TODO: Make this configurable? */
-	sa->v4.ttl = 64;
+	sa->rule.ttl_hl = 64;
 
 exitfunc:
 	return status;
@@ -902,7 +1016,7 @@ static status_t add_crypto_rule(private_fsm_kernel_ipsec_t *this,
 
 	/* Create the crypto session */
 	status = this->nl_crypto->add_session(this->nl_crypto, enc_alg, enc_key,
-		int_alg, int_key, sa->nat, sa->decap, &sa->crypto_index);
+		int_alg, int_key, sa->family, sa->nat, sa->decap, &sa->crypto_index);
 	if (status != SUCCESS)
 	{
 		DBG2(DBG_KNL, "%s: Could not add crypto session!", __FUNCTION__);
@@ -934,8 +1048,8 @@ static status_t add_decap_sa(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 	}
 
 	status = this->nl_ipsec->add_decap_sa(this->nl_ipsec, sa->tunnel->ifname,
-		&sa->v4.src, &sa->v4.dst, sa->family, sa->v4.spi,
-		sa->v4.ttl, sa->crypto_index, icv->icv_len,
+		&sa->rule.src[0], &sa->rule.dst[0], sa->family, sa->rule.spi,
+		sa->rule.ttl_hl, sa->crypto_index, icv->icv_len,
 		(u_int16_t)sa->replay_window, sa->nat, seq_skip, trailer_skip,
 		use_pattern);
 	if (status != SUCCESS)
@@ -951,13 +1065,12 @@ static status_t add_ip_flow_rule(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 {
 	status_t status = FAILED;
 	flow_t *flow = NULL;
-	chunk_t addr = chunk_empty;
 	bool valid = FALSE;
 	char *ifname = NULL;
 	char src_ifname[IFNAMSIZ];
 	char dst_ifname[IFNAMSIZ];
 
-	if (!this || !sa || !this->nl_ip)
+	if (!this || !sa || !this->nl_ipv4 || !this->nl_ipv6)
 	{
 		DBG2(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
 		status = INVALID_ARG;
@@ -973,67 +1086,52 @@ static status_t add_ip_flow_rule(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 		DBG2(DBG_KNL, "%s: Could not allocate flow object", __FUNCTION__);
 		goto errorexit;
 	}
-	flow->family = (u_int32_t)sa->dst->get_family(sa->dst);
 
-	/* TODO: Add IPv6 Support */
-	if (flow->family != AF_INET)
+	if (sa->family == AF_INET)
 	{
-		DBG2(DBG_KNL, "%s: IP family %u not supported", __FUNCTION__,
-			flow->family);
-		status = NOT_SUPPORTED;
-		goto errorexit;
+		flow->nl_ip = this->nl_ipv4;
 	}
-
-	/* Populate the flow structure */
-
-	/* In the case of NAT_T, the protocol is UDP */
-	flow->v4_tuple.proto = (sa->nat) ? IPPROTO_UDP : sa->protocol;
-
-	addr = sa->dst->get_address(sa->dst);
-	if (!addr.ptr || !addr.len)
+	else
 	{
-		DBG2(DBG_KNL, "%s: get_address failed for dst", __FUNCTION__);
-		goto errorexit;
+		flow->nl_ip = this->nl_ipv6;
 	}
-	flow->v4_tuple.src = ntohl(*(uint32_t *)addr.ptr);
-	flow->v4_tuple.src_port =
-		(sa->nat) ? (u_int32_t)sa->dst->get_port(sa->dst) : 0;
-
-	addr = sa->src->get_address(sa->src);
-	if (!addr.ptr || !addr.len)
-	{
-		DBG2(DBG_KNL, "%s: get_address failed for src", __FUNCTION__);
-		goto errorexit;
-	}
-	flow->v4_tuple.dst = ntohl(*(uint32_t *)addr.ptr);
-	flow->v4_tuple.dst_port =
-		(sa->nat) ? (u_int32_t)sa->src->get_port(sa->src) : 0;
 
 	/* Get the destination interface name */
 	valid = hydra->kernel_interface->get_interface(hydra->kernel_interface,
 		sa->dst, &ifname);
 	if (!valid || !ifname)
 	{
-		DBG2(DBG_KNL, "%s: get_interface failed for dst %H", __FUNCTION__,
-			sa->dst);
+		DBG2(DBG_KNL, "%s: get_interface failed for dst %H",
+			__FUNCTION__, sa->dst);
 		goto errorexit;
 	}
 
-	status = copy_ifname(dst_ifname, ifname);
+	copy_ifname(dst_ifname, ifname);
 	free(ifname);
-	if (status != SUCCESS)
-	{
-		DBG2(DBG_KNL, "%s: copy_ifname failed", __FUNCTION__,
-			sa->dst);
-		goto errorexit;
-	}
 
 	/* The source interface name is the name of the tunnel */
 	memcpy(src_ifname, sa->tunnel->ifname, IFNAMSIZ);
 
-	status = this->nl_ip->add_flow(this->nl_ip, &flow->v4_tuple.src,
-		flow->v4_tuple.src_port, &flow->v4_tuple.dst, flow->v4_tuple.dst_port,
-		flow->family, flow->v4_tuple.proto, src_ifname, dst_ifname);
+	/* Populate the flow structure */
+	flow->tuple.proto = (sa->nat) ? IPPROTO_UDP : sa->protocol;
+	flow->tuple.src_port = (sa->nat) ? sa->dst->get_port(sa->dst) : 0;
+	flow->tuple.dst_port = (sa->nat) ? sa->src->get_port(sa->src) : 0;
+
+	status = populate_addr_from_host(sa->family, sa->dst, &flow->tuple.src[0]);
+	if (status != SUCCESS)
+	{
+		goto errorexit;
+	}
+
+	status = populate_addr_from_host(sa->family, sa->src, &flow->tuple.dst[0]);
+	if (status != SUCCESS)
+	{
+		goto errorexit;
+	}
+
+	status = flow->nl_ip->add_flow(flow->nl_ip, &flow->tuple.src[0],
+		flow->tuple.src_port, &flow->tuple.dst[0], flow->tuple.dst_port,
+		flow->tuple.proto, src_ifname, dst_ifname);
 	if (status != SUCCESS)
 	{
 		DBG2(DBG_KNL, "%s: Failed to add IP flow rule", __FUNCTION__);
@@ -1093,7 +1191,7 @@ errorexit:
 }
 
 iproute_t *prepare_route(private_fsm_kernel_ipsec_t *this,
-	traffic_selector_t *dst_ts, char *dst_ifname)
+	traffic_selector_t *dst_ts, char *dst_ifname, host_t *src_ip)
 {
 	status_t status = SUCCESS;
 	iproute_t *route = NULL;
@@ -1140,14 +1238,23 @@ iproute_t *prepare_route(private_fsm_kernel_ipsec_t *this,
 			goto exitfunc;
 		}
 
-		route->src_ip =
-			host_create_any(route->subnet->get_family(route->subnet));
+		if (!src_ip)
+		{
+			route->src_ip =
+				host_create_any(route->subnet->get_family(route->subnet));
+		}
+		else
+		{
+			route->src_ip = src_ip->clone(src_ip);
+		}
+
 		if (!route->src_ip)
 		{
 			DBG2(DBG_KNL, "%s: Could not create src_ip", __FUNCTION__);
 			status = FAILED;
 			goto exitfunc;
 		}
+
 	}
 	else
 	{
@@ -1284,7 +1391,7 @@ exitfunc:
 
 static status_t install_route(private_fsm_kernel_ipsec_t *this,
 	traffic_selector_t *dst_ts, mutex_t *mutex, linked_list_t *list,
-	char *ifname)
+	char *ifname, host_t *src_ip)
 {
 	status_t status = SUCCESS;
 	iproute_t *route = NULL;
@@ -1296,7 +1403,7 @@ static status_t install_route(private_fsm_kernel_ipsec_t *this,
 		return INVALID_ARG;
 	}
 
-	route = prepare_route(this, dst_ts, ifname);
+	route = prepare_route(this, dst_ts, ifname, src_ip);
 	if (!route)
 	{
 		DBG2(DBG_KNL, "%s: Could not prepare route", __FUNCTION__);
@@ -1390,7 +1497,8 @@ static status_t add_route(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 	}
 
 	status = install_route(this, dst_ts, this->routes_mutex, this->routes,
-		&sa->tunnel->ifname[0]);
+		&sa->tunnel->ifname[0],
+		((this->install_virtual_ip) ? sa->tunnel->vip : NULL));
 
 	if (status != SUCCESS)
 	{
@@ -1405,6 +1513,8 @@ static status_t add_encap_flow(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 	traffic_selector_t *src_ts, traffic_selector_t *dst_ts, u_int32_t family)
 {
 	status_t status = FAILED;
+	u_int32_t src[4];
+	u_int32_t dst[4];
 	u_int32_t proto = 0;
 	icv_len_t *icv = NULL;
 
@@ -1418,48 +1528,32 @@ static status_t add_encap_flow(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 		return FAILED;
 	}
 
-	if (family == AF_INET)
+	proto = dst_ts->get_protocol(dst_ts);
+	if (!proto)
 	{
-		u_int32_t src = 0;
-		u_int32_t dst = 0;
-		chunk_t addr = chunk_empty;
-
-		proto = dst_ts->get_protocol(dst_ts);
-		if (!proto)
-		{
-			DBG1(DBG_KNL, "%s: Protocol %u not supported for encap flows",
-				__FUNCTION__, proto);
-			status = INVALID_ARG;
-			goto exitfunc;
-		}
-
-		addr = dst_ts->get_from_address(dst_ts);
-		if (!addr.ptr || !addr.len)
-		{
-			status = FAILED;
-			goto exitfunc;
-		}
-		dst = ntohl(*(uint32_t *)addr.ptr);
-
-		addr = src_ts->get_from_address(src_ts);
-		if (!addr.ptr || !addr.len)
-		{
-			status = FAILED;
-			goto exitfunc;
-		}
-		src = ntohl(*(uint32_t *)addr.ptr);
-
-		status = this->nl_ipsec->add_encap_flow(this->nl_ipsec,
-			sa->tunnel->ifname, &src, &dst, family, proto, &sa->v4.src,
-			&sa->v4.dst, sa->family, sa->v4.spi, sa->v4.ttl, sa->crypto_index,
-			icv->icv_len, (u_int16_t)sa->replay_window, sa->nat, FALSE, FALSE,
-			FALSE);
+		DBG1(DBG_KNL, "%s: Protocol %u not supported for encap flows",
+			__FUNCTION__, proto);
+		status = INVALID_ARG;
+		goto exitfunc;
 	}
-	else
+
+	status = populate_addr_from_ts(family, dst_ts, &dst[0]);
+	if (status != SUCCESS)
 	{
-		/* TODO: Add IPv6 support */
-		status = NOT_SUPPORTED;
+		goto exitfunc;
 	}
+
+	status = populate_addr_from_ts(family, src_ts, &src[0]);
+	if (status != SUCCESS)
+	{
+		goto exitfunc;
+	}
+
+	status = this->nl_ipsec->add_encap_flow(this->nl_ipsec,
+		sa->tunnel->ifname, &src[0], &dst[0], family, proto, &sa->rule.src[0],
+		&sa->rule.dst[0], sa->family, sa->rule.spi, sa->rule.ttl_hl,
+		sa->crypto_index, icv->icv_len, (u_int16_t)sa->replay_window, sa->nat,
+		FALSE, FALSE, FALSE);
 
 exitfunc:
 	return status;
@@ -1471,6 +1565,11 @@ static status_t add_encap_subnet(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 	status_t status = FAILED;
 	u_int32_t proto = 0;
 	icv_len_t *icv = NULL;
+	u_int32_t msk[4];
+	host_t *subnet = NULL;
+	host_t *netmask = NULL;
+	u_int32_t sub[4];
+	u_int8_t mask;
 
 	if (!this || !sa || !dst_ts)
 	{
@@ -1482,55 +1581,54 @@ static status_t add_encap_subnet(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 		return FAILED;
 	}
 
-	if (family == AF_INET)
+	proto = dst_ts->get_protocol(dst_ts);
+	if (!proto)
 	{
-		chunk_t addr = chunk_empty;
-		host_t *subnet = NULL;
-		u_int32_t sub = 0;
-		u_int32_t msk = 0;
-		u_int8_t mask = 0;
-
-		proto = dst_ts->get_protocol(dst_ts);
-		if (!proto)
-		{
-			/* A protocol of 0 denotes %any, which is 0xFF in NSS */
-			proto = 0xFF;
-		}
-
-		/* Prepare the destination network from the dst_ts */
-		dst_ts->to_subnet(dst_ts, &subnet, &mask);
-		if (!subnet)
-		{
-			DBG2(DBG_KNL, "%s: Could not get subnet from %R", __FUNCTION__,
-				dst_ts);
-			status = FAILED;
-			goto exitfunc;
-		}
-
-		addr = subnet->get_address(subnet);
-		if (!addr.ptr || !addr.len)
-		{
-			DBG2(DBG_KNL, "%s: Could not get address from subnet %H",
-				__FUNCTION__, subnet);
-			status = FAILED;
-			goto exitfunc;
-		}
-		sub = ntohl(*(u_int32_t *)addr.ptr);
-		msk = ~(1 << (32 - mask)) + 1;
-
-		status = this->nl_ipsec->add_encap_subnet(this->nl_ipsec,
-			sa->tunnel->ifname, &sub, &msk, family, proto, &sa->v4.src,
-			&sa->v4.dst, sa->family, sa->v4.spi, sa->v4.ttl, sa->crypto_index,
-			icv->icv_len, (u_int16_t)sa->replay_window, sa->nat, FALSE, FALSE,
-			FALSE);
+		/* A protocol of 0 denotes %any, which is 0xFF in NSS */
+		proto = 0xFF;
 	}
-	else
+
+	/* Prepare the destination network from the dst_ts */
+	dst_ts->to_subnet(dst_ts, &subnet, &mask);
+	if (!subnet)
 	{
-		/* TODO: Add IPv6 support */
-		status = NOT_SUPPORTED;
+		DBG2(DBG_KNL, "%s: Could not get subnet from %R", __FUNCTION__,
+			dst_ts);
+		status = FAILED;
+		goto exitfunc;
 	}
+
+	netmask = host_create_netmask(family, mask);
+	if (!netmask)
+	{
+		DBG2(DBG_KNL, "%s: Could not create netmask from %R", __FUNCTION__,
+			dst_ts);
+		status = FAILED;
+		goto exitfunc;
+	}
+
+	status = populate_addr_from_host(family, netmask, &msk[0]);
+	if (status != SUCCESS)
+	{
+		goto exitfunc;
+	}
+
+	status = populate_addr_from_host(family, subnet, &sub[0]);
+	if (status != SUCCESS)
+	{
+		goto exitfunc;
+	}
+
+	status = this->nl_ipsec->add_encap_subnet(this->nl_ipsec,
+		sa->tunnel->ifname, &sub[0], &msk[0], family, proto,
+		&sa->rule.src[0], &sa->rule.dst[0], sa->family, sa->rule.spi,
+		sa->rule.ttl_hl, sa->crypto_index, icv->icv_len,
+		(u_int16_t)sa->replay_window, sa->nat, FALSE, FALSE, FALSE);
 
 exitfunc:
+	DESTROY_IF(netmask);
+	DESTROY_IF(subnet);
+
 	return status;
 }
 
@@ -1669,6 +1767,13 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 	this->sas->insert_last(this->sas, sa);
 	this->sas_mutex->unlock(this->sas_mutex);
 
+	sa->family = sa->dst->get_family(sa->dst);
+	status = populate_sa(sa);
+	if (status != SUCCESS)
+	{
+		goto errorexit;
+	}
+
 	status = add_crypto_rule(this, sa, enc_alg, enc_key, int_alg, int_key);
 	if (status != SUCCESS)
 	{
@@ -1683,22 +1788,6 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 	DBG2(DBG_KNL, "%s: IKE SA %u tunnel refcount %u", __FUNCTION__,
 		tunnel->ike_sa_id, ref);
 	tunnel->mutex->unlock(tunnel->mutex);
-
-	sa->family = sa->dst->get_family(sa->dst);
-	if (sa->family == AF_INET)
-	{
-		status = populate_v4_sa(sa);
-	}
-	else
-	{
-		/* TODO: Add IPv6 support */
-		status = NOT_SUPPORTED;
-	}
-
-	if (status != SUCCESS)
-	{
-		goto delsa;
-	}
 
 	if (inbound)
 	{
@@ -1859,7 +1948,7 @@ static status_t delete_shunt(private_fsm_kernel_ipsec_t *this,
 		return INVALID_ARG;
 	}
 
-	route = prepare_route(this, dst_ts, NULL);
+	route = prepare_route(this, dst_ts, NULL, NULL);
 	if (!route)
 	{
 		DBG2(DBG_KNL, "%s: Could not prepare route for %R", __FUNCTION__,
@@ -1915,7 +2004,7 @@ static status_t add_shunt(private_fsm_kernel_ipsec_t *this,
 	}
 
 	status = install_route(this, dst_ts, this->shunts_mutex, this->shunts,
-		NULL);
+		NULL, NULL);
 	if (status != SUCCESS)
 	{
 		DBG2(DBG_KNL, "%s: Failed to install route for %R", __FUNCTION__,
@@ -2420,7 +2509,8 @@ METHOD(kernel_ipsec_t, destroy, void, private_fsm_kernel_ipsec_t *this)
 	DESTROY_IF(this->shunts_mutex);
 	DESTROY_IF(this->nl_crypto);
 	DESTROY_IF(this->nl_ipsec);
-	DESTROY_IF(this->nl_ip);
+	DESTROY_IF(this->nl_ipv4);
+	DESTROY_IF(this->nl_ipv6);
 	DESTROY_IF(this->rng);
 
 	free(this);
@@ -2474,6 +2564,8 @@ fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
 		.shunts = linked_list_create(),
 		.shunts_mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
 		.rng = lib->crypto->create_rng(lib->crypto, RNG_WEAK),
+		.install_virtual_ip = lib->settings->get_bool(lib->settings,
+			"%s.install_virtual_ip", TRUE, lib->ns),
 		);
 
 	/* Create FSM netlink crypto interface */
@@ -2490,9 +2582,16 @@ fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
 		goto exitcleanup;
 	}
 
-	/* Create FSM netlink ip interface */
-	this->nl_ip = fsm_netlink_ip_create();
-	if (!this->nl_ip)
+	/* Create FSM netlink ip interface for IPv4 */
+	this->nl_ipv4 = fsm_netlink_ip_create(AF_INET);
+	if (!this->nl_ipv4)
+	{
+		goto exitcleanup;
+	}
+
+	/* Create FSM netlink ip interface for IPv6 */
+	this->nl_ipv6 = fsm_netlink_ip_create(AF_INET6);
+	if (!this->nl_ipv6)
 	{
 		goto exitcleanup;
 	}

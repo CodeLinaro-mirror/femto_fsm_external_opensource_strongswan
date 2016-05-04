@@ -40,7 +40,9 @@
 #include <nss_cmn.h>
 #include <nss_nlcmn_if.h>
 #include <nss_ipv4.h>
+#include <nss_ipv6.h>
 #include <nss_nlipv4_if.h>
+#include <nss_nlipv6_if.h>
 #include <netlink/msg.h>
 #include "fsm_netlink_sock.h"
 #include "fsm_netlink_ip.h"
@@ -59,11 +61,9 @@ struct private_fsm_netlink_ip_t
 	fsm_netlink_ip_t public;
 
 	/**
-	 * FSM netlink socket context (IPv4 family)
+	 * FSM netlink socket context
 	 */
-	fsm_netlink_sock_t *nl_sock_v4;
-
-	/* TODO: Add IPv6 socket */
+	fsm_netlink_sock_t *nl_sock;
 
 	/**
 	 * Mutex to lock access to socket context
@@ -76,9 +76,14 @@ struct private_fsm_netlink_ip_t
 	thread_t *thread;
 
 	/**
-	 * Semaphore for notifying of errors received
+	 * Semaphore for notifying of errors received on the socket
 	 */
 	semaphore_t *err_sem;
+
+	/**
+	 * IP family (AF_INET or AF_INET6)
+	 */
+	u_int32_t family;
 };
 
 #define IP_DEFAULT_ERR_TIMEOUT 200
@@ -94,7 +99,7 @@ CALLBACK(ip_receiver, void *, private_fsm_netlink_ip_t *this)
 	while (TRUE)
 	{
 		/* Receive responses (messages parsed by callback) */
-		status = this->nl_sock_v4->recv_msgs(this->nl_sock_v4);
+		status = this->nl_sock->recv_msgs(this->nl_sock);
 		if (status != SUCCESS)
 		{
 			DBG2(DBG_KNL, "%s: Error receiving messages", __FUNCTION__);
@@ -114,10 +119,11 @@ CALLBACK(ip_receiver, void *, private_fsm_netlink_ip_t *this)
 	return NULL;
 }
 
-static status_t ipv4_send_msg(private_fsm_netlink_ip_t *this,
-	struct nss_nlipv4_rule *rulePtr, uint16_t cmd)
+static status_t ip_send_msg(private_fsm_netlink_ip_t *this, void *rulePtr,
+	uint16_t cmd)
 {
 	status_t status = SUCCESS;
+	struct nss_nlcmn *cm = NULL;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ip", __FUNCTION__);
 
@@ -127,19 +133,29 @@ static status_t ipv4_send_msg(private_fsm_netlink_ip_t *this,
 		return INVALID_ARG;
 	}
 
-	if (!this->nl_sock_v4 || !this->err_sem)
+	if (!this->nl_sock || !this->err_sem)
 	{
 		DBG2(DBG_KNL, "%s: Invalid sock ctx", __FUNCTION__);
 		return INVALID_ARG;
 	}
 
-	/* Init the message structure*/
-	nss_nlipv4_rule_init(rulePtr, (enum nss_ipv4_message_types)cmd);
+	if (this->family == AF_INET)
+	{
+		/* Init the message structure*/
+		nss_nlipv4_rule_init((struct nss_nlipv4_rule *)rulePtr,
+			(enum nss_ipv4_message_types)cmd);
+		cm = &((struct nss_nlipv4_rule *)rulePtr)->cm;
+	}
+	else
+	{
+		nss_nlipv6_rule_init((struct nss_nlipv6_rule *)rulePtr,
+			(enum nss_ipv6_message_types)cmd);
+		cm = &((struct nss_nlipv6_rule *)rulePtr)->cm;
+	}
 
 	/* send message */
 	this->mutex->lock(this->mutex);
-	status = this->nl_sock_v4->send_msg(this->nl_sock_v4, &rulePtr->cm,
-		rulePtr);
+	status = this->nl_sock->send_msg(this->nl_sock, cm, rulePtr);
 	this->mutex->unlock(this->mutex);
 
 	if (status != SUCCESS)
@@ -151,7 +167,8 @@ static status_t ipv4_send_msg(private_fsm_netlink_ip_t *this,
 	DBG2(DBG_KNL, "%s: message sent cmd: %u", __FUNCTION__, cmd);
 
 	/* See if there is an error. */
-	if (!this->err_sem->timed_wait(this->err_sem, IP_DEFAULT_ERR_TIMEOUT))
+	if (!this->err_sem->timed_wait(this->err_sem,
+		IP_DEFAULT_ERR_TIMEOUT))
 	{
 		DBG2(DBG_KNL, "%s: Error message received.", __FUNCTION__);
 		return FAILED;
@@ -197,8 +214,8 @@ CALLBACK(ip_err, void, private_fsm_netlink_ip_t *this, void *msg)
 		this->err_sem->post(this->err_sem);
 	}
 
-	DBG2(DBG_KNL, "%s: Error received -- %s", __FUNCTION__,
-		strerror_safe(nlerr->error));
+	DBG2(DBG_KNL, "%s: Error received (%d) -- %s", __FUNCTION__,
+		nlerr->error, strerror_safe(-nlerr->error));
 }
 
 static status_t add_v4_flow(private_fsm_netlink_ip_t *this,
@@ -224,8 +241,48 @@ static status_t add_v4_flow(private_fsm_netlink_ip_t *this,
 	DBG2(DBG_KNL, "%s: src 0x%08x port %u dst 0x%08x port %u proto %u",
 		__FUNCTION__, src, src_port, dst, dst_port, proto);
 
+	status = ip_send_msg(this, &v4_rule, NSS_IPV4_TX_CREATE_RULE_MSG);
+	if (status != SUCCESS)
+	{
+		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
+		return status;
+	}
 
-	status = ipv4_send_msg(this, &v4_rule, NSS_IPV4_TX_CREATE_RULE_MSG);
+	DBG2(DBG_KNL, "%s: successfully sent message", __FUNCTION__);
+	return status;
+}
+
+static status_t add_v6_flow(private_fsm_netlink_ip_t *this,
+	u_int32_t *src, u_int32_t src_port, u_int32_t *dst, u_int32_t dst_port,
+	u_int8_t proto, char src_ifname[IFNAMSIZ], char dst_ifname[IFNAMSIZ])
+{
+	status_t status = FAILED;
+	struct nss_nlipv6_rule v6_rule = { { 0 } };
+	struct nss_ipv6_5tuple *v6_tuple = &v6_rule.nim.msg.rule_create.tuple;
+
+	if (!src || !dst)
+	{
+		return INVALID_ARG;
+	}
+
+	memcpy(v6_rule.flow_ifname, src_ifname, IFNAMSIZ);
+	memcpy(v6_rule.return_ifname, dst_ifname, IFNAMSIZ);
+
+	/* Set the connection valid Flag */
+	v6_rule.nim.msg.rule_create.valid_flags |= NSS_IPV6_RULE_CREATE_CONN_VALID;
+
+	memcpy(v6_tuple->flow_ip, src, sizeof(v6_tuple->flow_ip));
+	memcpy(v6_tuple->return_ip, dst, sizeof(v6_tuple->return_ip));
+	v6_tuple->protocol = proto;
+	v6_tuple->flow_ident = src_port;
+	v6_tuple->return_ident = dst_port;
+
+	DBG2(DBG_KNL, "%s: src 0x%08x%08x%08x%08x port %u dst 0x%08x%08x%08x%08x "
+				  "port %u proto %u",
+		__FUNCTION__, src[0], src[1], src[2], src[3], src_port, dst[0], dst[1],
+		dst[2], dst[3], dst_port, proto);
+
+	status = ip_send_msg(this, (void *)&v6_rule, NSS_IPV6_TX_CREATE_RULE_MSG);
 	if (status != SUCCESS)
 	{
 		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
@@ -238,8 +295,7 @@ static status_t add_v4_flow(private_fsm_netlink_ip_t *this,
 
 METHOD(fsm_netlink_ip_t, add_flow, status_t, private_fsm_netlink_ip_t *this,
 	u_int32_t *src, u_int32_t src_port, u_int32_t *dst, u_int32_t dst_port,
-	u_int32_t family, u_int8_t proto, char src_ifname[IFNAMSIZ],
-	char dst_ifname[IFNAMSIZ])
+	u_int8_t proto, char src_ifname[IFNAMSIZ], char dst_ifname[IFNAMSIZ])
 {
 	status_t status = SUCCESS;
 
@@ -251,14 +307,21 @@ METHOD(fsm_netlink_ip_t, add_flow, status_t, private_fsm_netlink_ip_t *this,
 		return INVALID_ARG;
 	}
 
-	/* TODO: Add IPv6 support */
-	if (family != AF_INET)
+	switch(this->family)
 	{
-		return NOT_SUPPORTED;
-	}
+		case AF_INET:
+			status = add_v4_flow(this, *src, src_port, *dst, dst_port, proto,
+				src_ifname, dst_ifname);
+			break;
 
-	status = add_v4_flow(this, *src, src_port, *dst, dst_port, proto,
-		src_ifname, dst_ifname);
+		case AF_INET6:
+			status = add_v6_flow(this, src, src_port, dst, dst_port, proto,
+				src_ifname, dst_ifname);
+			break;
+
+		default:
+			return NOT_SUPPORTED;
+	}
 
 	return status;
 }
@@ -279,7 +342,37 @@ static status_t del_v4_flow(private_fsm_netlink_ip_t *this, u_int32_t src,
 	DBG2(DBG_KNL, "%s: src 0x%08x port %u dst 0x%08x port %u proto %u",
 		__FUNCTION__, src, src_port, dst, dst_port, proto);
 
-	status = ipv4_send_msg(this, &v4_rule, NSS_IPV4_TX_DESTROY_RULE_MSG);
+	status = ip_send_msg(this, (void *)&v4_rule, NSS_IPV4_TX_DESTROY_RULE_MSG);
+	if (status != SUCCESS)
+	{
+		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
+		return status;
+	}
+
+	DBG2(DBG_KNL, "%s: successfully sent message", __FUNCTION__);
+
+	return status;
+}
+
+static status_t del_v6_flow(private_fsm_netlink_ip_t *this, u_int32_t *src,
+	u_int32_t src_port, u_int32_t *dst, u_int32_t dst_port, u_int8_t proto)
+{
+	status_t status = FAILED;
+	struct nss_nlipv6_rule v6_rule = { { 0 } };
+	struct nss_ipv6_5tuple *v6_tuple = &v6_rule.nim.msg.rule_create.tuple;
+
+	memcpy(v6_tuple->flow_ip, src, sizeof(v6_tuple->flow_ip));
+	memcpy(v6_tuple->return_ip, src, sizeof(v6_tuple->return_ip));
+	v6_tuple->protocol = proto;
+	v6_tuple->flow_ident = src_port;
+	v6_tuple->return_ident = dst_port;
+
+	DBG2(DBG_KNL, "%s: src 0x%08x%08x%08x%08x port %u dst 0x%08x%08x%08x%08x "
+				  "port %u proto %u",
+		__FUNCTION__, src[0], src[1], src[2], src[3], src_port, dst[0], dst[1],
+		dst[2], dst[3], dst_port, proto);
+
+	status = ip_send_msg(this, (void *)&v6_rule, NSS_IPV6_TX_DESTROY_RULE_MSG);
 	if (status != SUCCESS)
 	{
 		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
@@ -293,7 +386,7 @@ static status_t del_v4_flow(private_fsm_netlink_ip_t *this, u_int32_t src,
 
 METHOD(fsm_netlink_ip_t, del_flow, status_t, private_fsm_netlink_ip_t *this,
 	u_int32_t *src, u_int32_t src_port, u_int32_t *dst, u_int32_t dst_port,
-	u_int32_t family, u_int8_t proto)
+	u_int8_t proto)
 {
 	status_t status = SUCCESS;
 
@@ -304,13 +397,19 @@ METHOD(fsm_netlink_ip_t, del_flow, status_t, private_fsm_netlink_ip_t *this,
 		return INVALID_ARG;
 	}
 
-	/* TODO: Add IPv6 support */
-	if (family != AF_INET)
+	switch(this->family)
 	{
-		return NOT_SUPPORTED;
-	}
+		case AF_INET:
+			status = del_v4_flow(this, *src, src_port, *dst, dst_port, proto);
+			break;
 
-	status = del_v4_flow(this, *src, src_port, *dst, dst_port, proto);
+		case AF_INET6:
+			status = del_v6_flow(this, src, src_port, dst, dst_port, proto);
+			break;
+
+		default:
+			return NOT_SUPPORTED;
+	}
 
 	return status;
 }
@@ -329,7 +428,7 @@ METHOD(fsm_netlink_ip_t, destroy, void, private_fsm_netlink_ip_t *this)
 		this->thread->detach(this->thread);
 	}
 
-	DESTROY_IF(this->nl_sock_v4);
+	DESTROY_IF(this->nl_sock);
 	DESTROY_IF(this->mutex);
 	DESTROY_IF(this->err_sem);
 	free(this);
@@ -338,11 +437,17 @@ METHOD(fsm_netlink_ip_t, destroy, void, private_fsm_netlink_ip_t *this)
 /*
  * Described in header.
  */
-fsm_netlink_ip_t *fsm_netlink_ip_create(void)
+fsm_netlink_ip_t *fsm_netlink_ip_create(u_int32_t family)
 {
 	private_fsm_netlink_ip_t *this;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ip", __FUNCTION__);
+
+	if ((family != AF_INET) && (family != AF_INET6))
+	{
+		DBG2(DBG_KNL, "%s: IP family %u not supported", __FUNCTION__, family);
+		return NULL;
+	}
 
 	INIT(this,
 		.public =
@@ -353,16 +458,24 @@ fsm_netlink_ip_t *fsm_netlink_ip_create(void)
 		},
 		.mutex = mutex_create(MUTEX_TYPE_DEFAULT),
 		.err_sem = semaphore_create(0),
+		.family = family,
 		);
 
-	this->nl_sock_v4 = fsm_netlink_sock_create(NSS_NLIPV4_FAMILY, ip_resp,
-		ip_ack, ip_err, (void *)this);
-	if (this->nl_sock_v4 == NULL)
+	if (family == AF_INET)
+	{
+		this->nl_sock = fsm_netlink_sock_create(NSS_NLIPV4_FAMILY, ip_resp,
+			ip_ack, ip_err, (void *)this);
+	}
+	else
+	{
+		this->nl_sock = fsm_netlink_sock_create(NSS_NLIPV6_FAMILY, ip_resp,
+			ip_ack, ip_err, (void *)this);
+	}
+
+	if (this->nl_sock == NULL)
 	{
 		goto exitout;
 	}
-
-	/* TODO: Add IPv6 socket */
 
 	/* Spawn thread to listen to socket */
 	this->thread = thread_create((thread_main_t)ip_receiver, this);
