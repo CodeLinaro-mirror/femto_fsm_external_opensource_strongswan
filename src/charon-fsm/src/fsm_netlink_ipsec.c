@@ -218,6 +218,7 @@ CALLBACK(ipsec_mcast_resp, void, private_fsm_netlink_ipsec_t *this,
 	struct nss_ipsecmgr_sa_stats *nss_stats = NULL;
 	struct nss_nlipsec_rule *rule_ptr = NULL;
 	stats_t *stats = NULL;
+	u_int32_t spi = 0;
 
 	DBG3(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 
@@ -258,52 +259,73 @@ CALLBACK(ipsec_mcast_resp, void, private_fsm_netlink_ipsec_t *this,
 				nss_stats->crypto_index, nss_stats->pkts.bytes,
 				nss_stats->pkts.count);
 
-			/* Add stats to hashtable */
-			this->stats_mutex->lock(this->stats_mutex);
-			/* See if we already have stats for this SA */
-			stats = (stats_t *)this->stats->get(this->stats,
-				&nss_stats->sa.data.v4.spi_index);
-
-			if (stats == NULL)
-			{
-				INIT(stats,
-					.last_use_time = nss_stats->pkts.bytes ?
-						time_monotonic(NULL) : 0,
-					.spi = nss_stats->sa.data.v4.spi_index,
-					.bytes = nss_stats->pkts.bytes,
-					.count = nss_stats->pkts.count,
-					);
-
-				if (!stats)
-				{
-					DBG2(DBG_KNL, "%s: Could not init stats", __FUNCTION__);
-					this->stats_mutex->unlock(this->stats_mutex);
-					return;
-				}
-
-				(stats_t *)this->stats->put(this->stats, &stats->spi, stats);
-			}
-			else
-			{
-				/* If there was traffic on the SA since the last mcast, update
-				 * the values.
-				 */
-				if (nss_stats->pkts.bytes != 0)
-				{
-					stats->last_use_time = time_monotonic(NULL);
-					stats->bytes += nss_stats->pkts.bytes;
-					stats->count += nss_stats->pkts.count;
-				}
-			}
-
-			this->stats_mutex->unlock(this->stats_mutex);
+			spi = nss_stats->sa.data.v4.spi_index;
 			break;
+
 		case NSS_IPSECMGR_SA_TYPE_V6:
-			/* TODO: Add IPv6 support */
+			DBG3(DBG_KNL,
+				"%s: spi 0x%08x src 0x%08x%08x%08x%08x dst 0x%08x%08x%08x%08x "
+				"hl %u seq %u crypto %u bytes %u count %u", __FUNCTION__,
+				nss_stats->sa.data.v6.spi_index,
+				nss_stats->sa.data.v6.src_ip[0],
+				nss_stats->sa.data.v6.src_ip[1],
+				nss_stats->sa.data.v6.src_ip[2],
+				nss_stats->sa.data.v6.src_ip[3],
+				nss_stats->sa.data.v6.dst_ip[0],
+				nss_stats->sa.data.v6.dst_ip[1],
+				nss_stats->sa.data.v6.dst_ip[2],
+				nss_stats->sa.data.v6.dst_ip[3],
+				nss_stats->sa.data.v6.hop_limit, nss_stats->seq_num,
+				nss_stats->crypto_index, nss_stats->pkts.bytes,
+				nss_stats->pkts.count);
+
+			spi = nss_stats->sa.data.v6.spi_index;
 			break;
+
 		default:
-			break;
+			DBG2(DBG_KNL, "%s: Invalid type %u", __FUNCTION__,
+				nss_stats->sa.type);
+			return;
 	}
+
+	/* Add stats to hashtable */
+	this->stats_mutex->lock(this->stats_mutex);
+	/* See if we already have stats for this SA */
+	stats = (stats_t *)this->stats->get(this->stats, &spi);
+
+	if (stats == NULL)
+	{
+		INIT(stats,
+			.last_use_time = nss_stats->pkts.bytes ?
+				time_monotonic(NULL) : 0,
+			.spi = spi,
+			.bytes = nss_stats->pkts.bytes,
+			.count = nss_stats->pkts.count,
+			);
+
+		if (!stats)
+		{
+			DBG2(DBG_KNL, "%s: Could not init stats", __FUNCTION__);
+			this->stats_mutex->unlock(this->stats_mutex);
+			return;
+		}
+
+		(stats_t *)this->stats->put(this->stats, &stats->spi, stats);
+	}
+	else
+	{
+		/* If there was traffic on the SA since the last mcast, update
+		 * the values.
+		 */
+		if (nss_stats->pkts.bytes != 0)
+		{
+			stats->last_use_time = time_monotonic(NULL);
+			stats->bytes += nss_stats->pkts.bytes;
+			stats->count += nss_stats->pkts.count;
+		}
+	}
+
+	this->stats_mutex->unlock(this->stats_mutex);
 }
 
 CALLBACK(ipsec_mcast_err, void, private_fsm_netlink_ipsec_t *this, void *msg)
@@ -340,8 +362,8 @@ CALLBACK(ipsec_err, void, private_fsm_netlink_ipsec_t *this, void *msg)
 		this->err_sem->post(this->err_sem);
 	}
 
-	DBG2(DBG_KNL, "%s: Error received -- %s", __FUNCTION__,
-		strerror_safe(nlerr->error));
+	DBG2(DBG_KNL, "%s: Error received (%d) -- %s", __FUNCTION__,
+		nlerr->error, strerror_safe(-nlerr->error));
 }
 
 CALLBACK(ipsec_ack, void, private_fsm_netlink_ipsec_t *this, void *msg)
@@ -490,12 +512,12 @@ METHOD(fsm_netlink_ipsec_t, destroy_tunnel, status_t,
 }
 
 static status_t populate_v4_encap_flow(struct nss_nlipsec_rule *rule_ptr,
-	u_int32_t inner_src, u_int32_t inner_dst, u_int32_t proto)
+	u_int32_t *inner_src, u_int32_t *inner_dst, u_int32_t proto)
 {
 	status_t status = SUCCESS;
 	struct nss_ipsecmgr_encap_v4_tuple *v4_tuple = NULL;
 
-	if (!rule_ptr)
+	if (!rule_ptr || !inner_src || !inner_dst)
 	{
 		return INVALID_ARG;
 	}
@@ -503,54 +525,127 @@ static status_t populate_v4_encap_flow(struct nss_nlipsec_rule *rule_ptr,
 	rule_ptr->msg.flow.type = NSS_IPSECMGR_FLOW_TYPE_V4_TUPLE;
 	v4_tuple = &rule_ptr->msg.flow.data.v4_tuple;
 
-	v4_tuple->src_ip = inner_src;
-	v4_tuple->dst_ip = inner_dst;
+	v4_tuple->src_ip = *inner_src;
+	v4_tuple->dst_ip = *inner_dst;
 	v4_tuple->protocol = proto;
 
 	DBG2(DBG_KNL, "%s: src 0x%08x dst 0x%08x proto %u", __FUNCTION__,
-		inner_src, inner_dst, proto);
+		*inner_src, *inner_dst, proto);
+
+	return status;
+}
+
+static status_t populate_v6_encap_flow(struct nss_nlipsec_rule *rule_ptr,
+	u_int32_t *inner_src, u_int32_t *inner_dst, u_int32_t proto)
+{
+	status_t status = SUCCESS;
+	struct nss_ipsecmgr_encap_v6_tuple *v6_tuple = NULL;
+
+	if (!rule_ptr || !inner_src || !inner_dst)
+	{
+		return INVALID_ARG;
+	}
+
+	rule_ptr->msg.flow.type = NSS_IPSECMGR_FLOW_TYPE_V6_TUPLE;
+	v6_tuple = &rule_ptr->msg.flow.data.v6_tuple;
+
+	memcpy(&v6_tuple->src_ip[0], &inner_src[0], sizeof(v6_tuple->src_ip));
+	memcpy(&v6_tuple->dst_ip[0], &inner_dst[0], sizeof(v6_tuple->dst_ip));
+	v6_tuple->next_hdr = proto;
+
+	DBG2(DBG_KNL, "%s: src %b\ndst %b",
+		__FUNCTION__, &v6_tuple->src_ip[0], sizeof(v6_tuple->src_ip),
+		&v6_tuple->dst_ip[0], sizeof(v6_tuple->dst_ip));
+
 	return status;
 }
 
 static status_t populate_v4_encap_subnet(struct nss_nlipsec_rule *rule_ptr,
-	u_int32_t subnet, u_int32_t mask, u_int32_t proto)
+	u_int32_t *subnet, u_int32_t *mask, u_int32_t proto)
 {
 	status_t status = SUCCESS;
 	struct nss_ipsecmgr_encap_v4_subnet *v4_subnet = NULL;
 
-	if (!rule_ptr)
+	if (!rule_ptr || !subnet || !mask)
 	{
 		return INVALID_ARG;
 	}
 
 	rule_ptr->msg.flow.type = NSS_IPSECMGR_FLOW_TYPE_V4_SUBNET;
 	v4_subnet = &rule_ptr->msg.flow.data.v4_subnet;
-	v4_subnet->dst_subnet = subnet;
-	v4_subnet->dst_mask = mask;
+	v4_subnet->dst_subnet = *subnet;
+	v4_subnet->dst_mask = *mask;
 	v4_subnet->protocol = proto;
 
 	DBG2(DBG_KNL, "%s: subnet 0x%08x mask 0x%08x proto %u", __FUNCTION__,
-		subnet, mask, proto);
+		*subnet, *mask, proto);
+
+	return status;
+}
+
+static status_t populate_v6_encap_subnet(struct nss_nlipsec_rule *rule_ptr,
+	u_int32_t *subnet, u_int32_t *mask, u_int32_t proto)
+{
+	status_t status = SUCCESS;
+	struct nss_ipsecmgr_encap_v6_subnet *v6_subnet = NULL;
+
+	if (!rule_ptr || !subnet || !mask)
+	{
+		return INVALID_ARG;
+	}
+
+	rule_ptr->msg.flow.type = NSS_IPSECMGR_FLOW_TYPE_V6_SUBNET;
+	v6_subnet = &rule_ptr->msg.flow.data.v6_subnet;
+	memcpy(&v6_subnet->dst_subnet[0], &subnet[2],
+		sizeof(v6_subnet->dst_subnet));
+	memcpy(&v6_subnet->dst_mask[0], &mask[2], sizeof(v6_subnet->dst_mask));
+	v6_subnet->next_hdr = proto;
+
+	DBG2(DBG_KNL, "%s: subnet %b\nmask %b",
+		__FUNCTION__, &v6_subnet->dst_subnet[0], sizeof(v6_subnet->dst_subnet),
+		&v6_subnet->dst_mask[0], sizeof(v6_subnet->dst_mask));
+
 	return status;
 }
 
 static status_t populate_v4_sa(struct nss_nlipsec_rule *rule_ptr,
-	u_int32_t outer_src, u_int32_t outer_dst, u_int32_t spi, u_int32_t ttl)
+	u_int32_t *outer_src, u_int32_t *outer_dst, u_int32_t spi, u_int32_t ttl)
 {
 	status_t status = SUCCESS;
 	struct nss_ipsecmgr_sa_v4 *v4_sa = NULL;
 
-	if (!rule_ptr)
+	if (!rule_ptr || !outer_src || !outer_dst)
 	{
 		return INVALID_ARG;
 	}
 
 	rule_ptr->msg.sa.type = NSS_IPSECMGR_SA_TYPE_V4;
 	v4_sa = &rule_ptr->msg.sa.data.v4;
-	v4_sa->src_ip = outer_src;
-	v4_sa->dst_ip = outer_dst;
+	v4_sa->src_ip = *outer_src;
+	v4_sa->dst_ip = *outer_dst;
 	v4_sa->spi_index = spi;
 	v4_sa->ttl = ttl;
+
+	return status;
+}
+
+static status_t populate_v6_sa(struct nss_nlipsec_rule *rule_ptr,
+	u_int32_t *outer_src, u_int32_t *outer_dst, u_int32_t spi, u_int32_t hl)
+{
+	status_t status = SUCCESS;
+	struct nss_ipsecmgr_sa_v6 *v6_sa = NULL;
+
+	if (!rule_ptr || !outer_src || !outer_dst)
+	{
+		return INVALID_ARG;
+	}
+
+	rule_ptr->msg.sa.type = NSS_IPSECMGR_SA_TYPE_V6;
+	v6_sa = &rule_ptr->msg.sa.data.v6;
+	memcpy(&v6_sa->src_ip[0], &outer_src[0], sizeof(v6_sa->src_ip));
+	memcpy(&v6_sa->dst_ip[0], &outer_dst[0], sizeof(v6_sa->dst_ip));
+	v6_sa->spi_index = spi;
+	v6_sa->hop_limit = hl;
 
 	return status;
 }
@@ -582,6 +677,66 @@ static status_t populate_sa_data(struct nss_nlipsec_rule *rule_ptr,
 	return status;
 }
 
+#define POPULATE_ENCAP_FLOW(family, rule_ptr, src, dst, proto) \
+	(((family) == AF_INET) ? \
+	populate_v4_encap_flow(rule_ptr, src, dst, proto) : \
+	populate_v6_encap_flow(rule_ptr, src, dst, proto))
+
+#define POPULATE_ENCAP_SUBNET(family, rule_ptr, subnet, mask, proto) \
+	(((family) == AF_INET) ? \
+	populate_v4_encap_subnet(rule_ptr, subnet, mask, proto) : \
+	populate_v6_encap_subnet(rule_ptr, subnet, mask, proto))
+
+#define POPULATE_SA(family, rule_ptr, src, dst, spi, ttl) \
+	(((family) == AF_INET) ? populate_v4_sa(rule_ptr, src, dst, spi, ttl) : \
+	populate_v6_sa(rule_ptr, src, dst, spi, ttl))
+
+static status_t validate_and_populate_flow(struct nss_nlipsec_rule *rule_ptr,
+	char ifname[IFNAMSIZ], u_int32_t *inner_src, u_int32_t *inner_dst,
+	u_int32_t inner_family, u_int32_t protocol_nh, u_int32_t *outer_src,
+	u_int32_t *outer_dst, u_int32_t outer_family, u_int32_t spi,
+	u_int32_t ttl_hl)
+{
+	status_t status = SUCCESS;
+	if (!rule_ptr || !inner_src || !inner_dst || !outer_src || !outer_dst)
+	{
+		return INVALID_ARG;
+	}
+
+	if ((inner_family != AF_INET) && (inner_family != AF_INET6))
+	{
+		DBG2(DBG_KNL, "%s: Inner IP family %u not supported", __FUNCTION__,
+			inner_family);
+		return NOT_SUPPORTED;
+	}
+
+	if ((outer_family != AF_INET) && (outer_family != AF_INET6))
+	{
+		DBG2(DBG_KNL, "%s: Outer IP family %u not supported", __FUNCTION__,
+			outer_family);
+		return NOT_SUPPORTED;
+	}
+
+	memcpy(rule_ptr->ifname, ifname, IFNAMSIZ);
+
+	status = POPULATE_ENCAP_FLOW(inner_family, rule_ptr, inner_src, inner_dst,
+		protocol_nh);
+	if (status != SUCCESS)
+	{
+		return status;
+	}
+
+	status = POPULATE_SA(outer_family, rule_ptr, outer_src, outer_dst, spi,
+		ttl_hl);
+
+	if (status != SUCCESS)
+	{
+		return status;
+	}
+
+	return status;
+}
+
 METHOD(fsm_netlink_ipsec_t, add_encap_flow, status_t,
 	private_fsm_netlink_ipsec_t *this, char ifname[IFNAMSIZ],
 	u_int32_t *inner_src, u_int32_t *inner_dst, u_int32_t inner_family,
@@ -595,26 +750,14 @@ METHOD(fsm_netlink_ipsec_t, add_encap_flow, status_t,
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 
-	if (!this || !inner_src || !inner_dst || !outer_src || !outer_dst)
+	if (!this)
 	{
 		return INVALID_ARG;
 	}
 
-	if ((inner_family != AF_INET) || (outer_family != AF_INET))
-	{
-		DBG2(DBG_KNL, "%s: Support for IPv6 unavailable", __FUNCTION__);
-		return NOT_SUPPORTED;
-	}
-
-	memcpy(rule.ifname, ifname, IFNAMSIZ);
-
-	status = populate_v4_encap_flow(&rule, *inner_src, *inner_dst, protocol_nh);
-	if (status != SUCCESS)
-	{
-		return status;
-	}
-
-	status = populate_v4_sa(&rule, *outer_src, *outer_dst, spi, ttl_hl);
+	status = validate_and_populate_flow(&rule, ifname, inner_src, inner_dst,
+		inner_family, protocol_nh, outer_src, outer_dst, outer_family, spi,
+		ttl_hl);
 	if (status != SUCCESS)
 	{
 		return status;
@@ -648,26 +791,14 @@ METHOD(fsm_netlink_ipsec_t, del_encap_flow, status_t,
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 
-	if (!this || !inner_src || !inner_dst || !outer_src || !outer_dst)
+	if (!this)
 	{
 		return INVALID_ARG;
 	}
 
-	if ((inner_family != AF_INET) || (outer_family != AF_INET))
-	{
-		DBG2(DBG_KNL, "%s: Support for IPv6 unavailable", __FUNCTION__);
-		return NOT_SUPPORTED;
-	}
-
-	memcpy(rule.ifname, ifname, IFNAMSIZ);
-
-	status = populate_v4_encap_flow(&rule, *inner_src, *inner_dst, protocol_nh);
-	if (status != SUCCESS)
-	{
-		return status;
-	}
-
-	status = populate_v4_sa(&rule, *outer_src, *outer_dst, spi, ttl_hl);
+	status = validate_and_populate_flow(&rule, ifname, inner_src, inner_dst,
+		inner_family, protocol_nh, outer_src, outer_dst, outer_family, spi,
+		ttl_hl);
 	if (status != SUCCESS)
 	{
 		return status;
@@ -679,6 +810,47 @@ METHOD(fsm_netlink_ipsec_t, del_encap_flow, status_t,
 		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
 		return status;
 	}
+
+	return status;
+}
+
+static status_t validate_and_populate_subnet(struct nss_nlipsec_rule *rule_ptr,
+	char ifname[IFNAMSIZ], u_int32_t *subnet, u_int32_t *mask,
+	u_int32_t subnet_family, u_int32_t protocol_nh, u_int32_t *outer_src,
+	u_int32_t *outer_dst, u_int32_t outer_family, u_int32_t spi,
+	u_int32_t ttl_hl)
+{
+	status_t status = SUCCESS;
+	if (!rule_ptr || !subnet || !mask || !outer_src || !outer_dst)
+	{
+		return INVALID_ARG;
+	}
+
+	if ((subnet_family != AF_INET) && (subnet_family != AF_INET6))
+	{
+		DBG2(DBG_KNL, "%s: Subnet IP family %u not supported", __FUNCTION__,
+			subnet_family);
+		return NOT_SUPPORTED;
+	}
+
+	if ((outer_family != AF_INET) && (outer_family != AF_INET6))
+	{
+		DBG2(DBG_KNL, "%s: Outer IP family %u not supported", __FUNCTION__,
+			outer_family);
+		return NOT_SUPPORTED;
+	}
+
+	memcpy(rule_ptr->ifname, ifname, IFNAMSIZ);
+
+	status = POPULATE_ENCAP_SUBNET(subnet_family, rule_ptr, subnet, mask,
+		protocol_nh);
+	if (status != SUCCESS)
+	{
+		return status;
+	}
+
+	status = POPULATE_SA(outer_family, rule_ptr, outer_src, outer_dst, spi,
+		ttl_hl);
 
 	return status;
 }
@@ -696,26 +868,14 @@ METHOD(fsm_netlink_ipsec_t, add_encap_subnet, status_t,
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 
-	if (!this || !subnet || !mask || !outer_src || !outer_dst)
+	if (!this)
 	{
 		return INVALID_ARG;
 	}
 
-	if ((subnet_family != AF_INET) || (outer_family != AF_INET))
-	{
-		DBG2(DBG_KNL, "%s: Support for IPv6 unavailable", __FUNCTION__);
-		return NOT_SUPPORTED;
-	}
-
-	memcpy(rule.ifname, ifname, IFNAMSIZ);
-
-	status = populate_v4_encap_subnet(&rule, *subnet, *mask, protocol_nh);
-	if (status != SUCCESS)
-	{
-		return status;
-	}
-
-	status = populate_v4_sa(&rule, *outer_src, *outer_dst, spi, ttl_hl);
+	status = validate_and_populate_subnet(&rule, ifname, subnet, mask,
+		subnet_family, protocol_nh, outer_src, outer_dst, outer_family, spi,
+		ttl_hl);
 	if (status != SUCCESS)
 	{
 		return status;
@@ -749,26 +909,14 @@ METHOD(fsm_netlink_ipsec_t, del_encap_subnet, status_t,
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 
-	if (!this || !subnet || !mask || !outer_src || !outer_dst)
+	if (!this)
 	{
 		return INVALID_ARG;
 	}
 
-	if ((subnet_family != AF_INET) || (outer_family != AF_INET))
-	{
-		DBG2(DBG_KNL, "%s: Support for IPv6 unavailable", __FUNCTION__);
-		return NOT_SUPPORTED;
-	}
-
-	memcpy(rule.ifname, ifname, IFNAMSIZ);
-
-	status = populate_v4_encap_subnet(&rule, *subnet, *mask, protocol_nh);
-	if (status != SUCCESS)
-	{
-		return status;
-	}
-
-	status = populate_v4_sa(&rule, *outer_src, *outer_dst, spi, ttl_hl);
+	status = validate_and_populate_subnet(&rule, ifname, subnet, mask,
+		subnet_family, protocol_nh, outer_src, outer_dst, outer_family, spi,
+		ttl_hl);
 	if (status != SUCCESS)
 	{
 		return status;
@@ -799,15 +947,17 @@ METHOD(fsm_netlink_ipsec_t, del_encap_sa, status_t,
 		return INVALID_ARG;
 	}
 
-	if (outer_family != AF_INET)
+	if ((outer_family != AF_INET) && (outer_family != AF_INET6))
 	{
-		DBG2(DBG_KNL, "%s: Support for IPv6 unavailable", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Outer IP family %u not supported", __FUNCTION__,
+			outer_family);
 		return NOT_SUPPORTED;
 	}
 
 	memcpy(rule.ifname, ifname, IFNAMSIZ);
 
-	status = populate_v4_sa(&rule, *outer_src, *outer_dst, spi, ttl_hl);
+	status = POPULATE_SA(outer_family, &rule, outer_src, outer_dst, spi,
+		ttl_hl);
 	if (status != SUCCESS)
 	{
 		return status;
@@ -853,15 +1003,17 @@ METHOD(fsm_netlink_ipsec_t, add_decap_sa, status_t,
 		return INVALID_ARG;
 	}
 
-	if (outer_family != AF_INET)
+	if ((outer_family != AF_INET) && (outer_family != AF_INET6))
 	{
-		DBG2(DBG_KNL, "%s: Support for IPv6 unavailable", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Outer IP family %u not supported", __FUNCTION__,
+			outer_family);
 		return NOT_SUPPORTED;
 	}
 
 	memcpy(rule.ifname, ifname, IFNAMSIZ);
 
-	status = populate_v4_sa(&rule, *outer_src, *outer_dst, spi, ttl_hl);
+	status = POPULATE_SA(outer_family, &rule, outer_src, outer_dst, spi,
+		ttl_hl);
 	if (status != SUCCESS)
 	{
 		return status;
@@ -898,15 +1050,17 @@ METHOD(fsm_netlink_ipsec_t, del_decap_sa, status_t,
 		return INVALID_ARG;
 	}
 
-	if (outer_family != AF_INET)
+	if ((outer_family != AF_INET) && (outer_family != AF_INET6))
 	{
-		DBG2(DBG_KNL, "%s: Support for IPv6 unavailable", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Outer IP family %u not supported", __FUNCTION__,
+			outer_family);
 		return NOT_SUPPORTED;
 	}
 
 	memcpy(rule.ifname, ifname, IFNAMSIZ);
 
-	status = populate_v4_sa(&rule, *outer_src, *outer_dst, spi, ttl_hl);
+	status = POPULATE_SA(outer_family, &rule, outer_src, outer_dst, spi,
+		ttl_hl);
 	if (status != SUCCESS)
 	{
 		return status;

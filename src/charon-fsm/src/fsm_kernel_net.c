@@ -2438,7 +2438,8 @@ static status_t manage_srcroute(private_fsm_kernel_net_t *this, int nlmsg_type,
 		netlink_add_attribute(hdr, RTA_PREFSRC, chunk, sizeof(request));
 	}
 
-	if (gateway && gateway->get_family(gateway) == src_ip->get_family(src_ip))
+	if (gateway && !gateway->is_anyaddr(gateway) &&
+		(gateway->get_family(gateway) == src_ip->get_family(src_ip)))
 	{
 		chunk = gateway->get_address(gateway);
 		netlink_add_attribute(hdr, RTA_GATEWAY, chunk, sizeof(request));
