@@ -81,6 +81,7 @@ struct fsm_netlink_ipsec_t
 	 * @param  seq_skip		TRUE to skip ESP sequence
 	 * @param  trailer_skip	TRUE to skip ESP trailer
 	 * @param  use_pattern	TRUE to use random pattern in hash calculation
+	 * @param  mark			DSCP mark
 	 * @return status_t
 	 */
 	status_t (*add_encap_flow)(fsm_netlink_ipsec_t *this,
@@ -89,7 +90,7 @@ struct fsm_netlink_ipsec_t
 		u_int32_t *outer_dst, u_int32_t outer_family, u_int32_t spi,
 		u_int32_t ttl_hl, u_int32_t crypto_index, u_int16_t icv_len,
 		u_int16_t replay_win, bool nat, bool seq_skip, bool trailer_skip,
-		bool use_pattern);
+		bool use_pattern, u_int32_t mark);
 
 	/**
 	 * Add an encapsulation rule for destination subnet (tunnel must exist)
@@ -112,6 +113,7 @@ struct fsm_netlink_ipsec_t
 	 * @param  seq_skip			TRUE to skip ESP sequence
 	 * @param  trailer_skip		TRUE to skip ESP trailer
 	 * @param  use_pattern		TRUE to use random pattern in hash calculation
+	 * @param  mark				DSCP mark
 	 * @return status_t
 	 */
 	status_t (*add_encap_subnet)(fsm_netlink_ipsec_t *this,
@@ -120,7 +122,7 @@ struct fsm_netlink_ipsec_t
 		u_int32_t *outer_dst, u_int32_t outer_family, u_int32_t spi,
 		u_int32_t ttl_hl, u_int32_t crypto_index, u_int16_t icv_len,
 		u_int16_t replay_win, bool nat, bool seq_skip, bool trailer_skip,
-		bool use_pattern);
+		bool use_pattern, u_int32_t mark);
 
 	/**
 	 * Delete an encapsulation flow for explicit hosts (tunnel and flow and must

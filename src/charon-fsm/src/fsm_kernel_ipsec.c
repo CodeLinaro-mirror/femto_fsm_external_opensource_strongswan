@@ -357,6 +357,11 @@ struct sa_t
 	 * Integrity key length
 	 */
 	u_int32_t int_len;
+
+	/**
+	 * DSCP mark value
+	 */
+	mark_t mark;
 };
 
 /**
@@ -1553,7 +1558,7 @@ static status_t add_encap_flow(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 		sa->tunnel->ifname, &src[0], &dst[0], family, proto, &sa->rule.src[0],
 		&sa->rule.dst[0], sa->family, sa->rule.spi, sa->rule.ttl_hl,
 		sa->crypto_index, icv->icv_len, (u_int16_t)sa->replay_window, sa->nat,
-		FALSE, FALSE, FALSE);
+		FALSE, FALSE, FALSE, sa->mark.value);
 
 exitfunc:
 	return status;
@@ -1623,7 +1628,8 @@ static status_t add_encap_subnet(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 		sa->tunnel->ifname, &sub[0], &msk[0], family, proto,
 		&sa->rule.src[0], &sa->rule.dst[0], sa->family, sa->rule.spi,
 		sa->rule.ttl_hl, sa->crypto_index, icv->icv_len,
-		(u_int16_t)sa->replay_window, sa->nat, FALSE, FALSE, FALSE);
+		(u_int16_t)sa->replay_window, sa->nat, FALSE, FALSE, FALSE,
+		sa->mark.value);
 
 exitfunc:
 	DESTROY_IF(netmask);
@@ -1650,9 +1656,10 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 	refcount_t ref = 0;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec mode %N protocol %u "
-		"spi 0x%08x %s NAT %s",
+		"spi 0x%08x %s mark value 0x%08x mask 0x%08x NAT %s",
 		__FUNCTION__, ipsec_mode_names, mode, protocol, spi,
-		IPSEC_DIR_STR(inbound), (encap) ? "enabled" : "disabled");
+		IPSEC_DIR_STR(inbound), mark.value, mark.mask,
+		((encap) ? "enabled" : "disabled"));
 
 	if (!this || !src || !dst || !lifetime || !src_ts || !dst_ts)
 	{
@@ -1741,6 +1748,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 		.enc_len = enc_key.len,
 		.int_alg = int_alg,
 		.int_len = int_key.len,
+		.mark = mark,
 		);
 
 	if (!sa || !sa->mutex || !sa->src || !sa->dst)
@@ -2025,8 +2033,9 @@ METHOD(kernel_ipsec_t, add_policy, status_t,
 	u_int32_t ts_family = AF_INET;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec src %H dst %H ts %R===%R dir"
-		" %N type %u prio %u", __FUNCTION__, src, dst, src_ts, dst_ts,
-		policy_dir_names, direction, type, priority);
+		" %N type %u prio %u mark value 0x%08x mask 0x%08x", __FUNCTION__, src,
+		dst, src_ts, dst_ts, policy_dir_names, direction, type, priority,
+		mark.value, mark.mask);
 
 	if (!this || !src || !dst || !src_ts || !dst_ts || !sa || !this->sas_mutex)
 	{
