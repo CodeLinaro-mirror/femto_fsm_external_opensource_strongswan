@@ -44,4 +44,4 @@ charon_fsm_LDADD = \
 	$(PTHREADLIB) $(DLLIB)
 
 SUBDIRS = .
-SUBDIRS += tests
+SUBDIRS += tests tools/fsm_privkey

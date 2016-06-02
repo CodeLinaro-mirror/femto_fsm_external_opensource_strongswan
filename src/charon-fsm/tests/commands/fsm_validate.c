@@ -20,21 +20,21 @@
 
 #include "fsm_command.h"
 
-static bool verify(chunk_t *data, char *pub_path, chunk_t *sig)
+static bool verify(chunk_t *data, chunk_t *pub, chunk_t *sig)
 {
 	bool result = FALSE;
 	public_key_t *pub_key = NULL;
 	chunk_t encoding = chunk_empty;
 	chunk_t fingerprint = chunk_empty;
 
-	if (!data || !pub_path || !sig)
+	if (!data || !pub || !sig)
 	{
 		return FALSE;
 	}
 
 	/* Build a public key */
 	pub_key = lib->creds->create(lib->creds, CRED_PUBLIC_KEY, KEY_ANY,
-		BUILD_FROM_FILE, pub_path, BUILD_END);
+		BUILD_BLOB, *pub, BUILD_END);
 
 	if (!pub_key)
 	{
@@ -77,6 +77,7 @@ static int validate(void)
 	int result = 0;
 	chunk_t *data = NULL;
 	chunk_t *sig = NULL;
+	chunk_t *pub = NULL;
 
 	while (TRUE)
 	{
@@ -134,8 +135,17 @@ static int validate(void)
 		goto endvalidate;
 	}
 
+	pub = chunk_map(pub_path, FALSE);
+	if (!pub)
+	{
+		DBG1(DBG_APP, "chunk_map failed for %s: %s\n",
+			pub_path, strerror(errno));
+		result = -1;
+		goto endvalidate;
+	}
+
 	/* Verify signature */
-	if (!verify(data, pub_path, sig))
+	if (!verify(data, pub, sig))
 	{
 		DBG1(DBG_APP, "Invalid signature!");
 		result = -1;
@@ -155,6 +165,11 @@ endvalidate:
 		chunk_unmap(sig);
 	}
 
+	if (pub)
+	{
+		chunk_unmap(pub);
+	}
+
 	return result;
 }
 
@@ -168,10 +183,10 @@ static void __attribute__((constructor)) reg(void)
 		validate, 'V', "validate", "Validate the given signature",
 		{ "[--data file] [--key keyfile] [--sig sigfile]" },
 		{
-			{ "help", 'h', 0, "show usage information" },
-			{ "data", 'd', 1, "data that was signed" },
-			{ "key", 'k', 1, "public key in DER format" },
-			{ "sig", 's', 1, "signature file to validate" },
+			{ "help", 'h', 0, "Show usage information" },
+			{ "data", 'd', 1, "Data that was signed" },
+			{ "key", 'k', 1, "Public key in DER format" },
+			{ "sig", 's', 1, "Signature file to validate" },
 		}
 	});
 }

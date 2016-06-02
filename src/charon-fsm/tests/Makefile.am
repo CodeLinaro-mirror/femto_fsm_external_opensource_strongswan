@@ -2,8 +2,7 @@ ipsec_PROGRAMS = fsm_tests
 
 fsm_tests_SOURCES = \
 	fsm_tests.c \
-	fsm_command.c \
-	commands/fsm_provision.c \
+	../src/fsm_command.c \
 	commands/fsm_sign.c \
 	commands/fsm_validate.c \
 	../src/fsm_utils.c \
@@ -15,7 +14,6 @@ fsm_tests.o : $(top_builddir)/config.status
 
 fsm_tests_CFLAGS = \
 	-Wall -Werror -MD -MP \
-	-I$(SYSROOT)/usr/include/libnl3 \
 	-I$(top_srcdir)/src/libstrongswan \
 	-I$(top_srcdir)/src/libhydra \
 	-I$(top_srcdir)/src/libcharon \
@@ -30,5 +28,5 @@ fsm_tests_LDADD = \
 	$(top_builddir)/src/libcharon/libcharon.la \
 	$(top_builddir)/src/libhydra/libhydra.la \
 	$(top_builddir)/src/libstrongswan/libstrongswan.la \
-	-lm -lQsecureFsmApi -lQsecureIkeApi -lnl-3 -lnl-genl-3 \
+	-lm -lQsecureFsmApi -lQsecureIkeApi \
 	$(PTHREADLIB) $(DLLIB)

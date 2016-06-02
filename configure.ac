@@ -1773,6 +1773,7 @@ AC_CONFIG_FILES([
 	src/charon/Makefile
 	src/charon-fsm/Makefile
 	src/charon-fsm/tests/Makefile
+	src/charon-fsm/tools/fsm_privkey/Makefile
 	src/charon-nm/Makefile
 	src/charon-tkm/Makefile
 	src/charon-cmd/Makefile
