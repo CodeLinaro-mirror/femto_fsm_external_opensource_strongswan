@@ -169,10 +169,10 @@ void command_register(command_t command)
 		else
 		{
 			cmds[registered].options[i++] = (command_option_t){
-				"debug",	'v', 1, "set debug level, default: 1"
+				"debug",	'v', 1, "Set debug level, default: 1"
 			};
 			cmds[registered].options[i++] = (command_option_t){
-				"options",	'+', 1, "read command line options from file"
+				"options",	'+', 1, "Read command line options from file"
 			};
 		}
 	}
@@ -192,21 +192,15 @@ int command_usage(char *error)
 		out = stderr;
 		fprintf(out, "Error: %s\n", error);
 	}
-	fprintf(out, "fsm_tests tool\n");
-
-	if (active == help_idx)
-	{
-		fprintf(out, "loaded plugins: %s\n",
-			lib->plugins->loaded_plugins(lib->plugins));
-	}
+	fprintf(out, "%s tool\n", basename(argv[0]));
 
 	fprintf(out, "usage:\n");
 	if (active == help_idx)
 	{
 		for (i = 0; i < MAX_COMMANDS && cmds[i].cmd; i++)
 		{
-			fprintf(out, "  fsm_tests --%-7s (-%c)  %s\n",
-				cmds[i].cmd, cmds[i].op, cmds[i].description);
+			fprintf(out, "  %s --%-7s (-%c)  %s\n",
+				basename(argv[0]), cmds[i].cmd, cmds[i].op, cmds[i].description);
 		}
 	}
 	else
@@ -215,8 +209,8 @@ int command_usage(char *error)
 		{
 			if (i == 0)
 			{
-				fprintf(out, "  fsm_tests --%s %s\n",
-					cmds[active].cmd, cmds[active].line[i]);
+				fprintf(out, "  %s --%s %s\n",
+					basename(argv[0]), cmds[active].cmd, cmds[active].line[i]);
 			}
 			else
 			{
@@ -263,7 +257,7 @@ int command_dispatch(int c, char *v[])
 	active = help_idx = registered;
 	argc = c;
 	argv = v;
-	command_register((command_t){help, 'h', "help", "show usage information"});
+	command_register((command_t){help, 'h', "help", "Show usage information"});
 
 	build_opts();
 	op = getopt_long(c, v, command_optstring, command_opts, NULL);

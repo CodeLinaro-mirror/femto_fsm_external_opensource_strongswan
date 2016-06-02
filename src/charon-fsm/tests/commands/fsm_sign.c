@@ -178,9 +178,9 @@ static void __attribute__((constructor)) reg(void)
 		"Sign the given data with the private key already provisioned in TZ",
 		{ "[--in file] [--out outfile]" },
 		{
-			{ "help", 'h', 0, "show usage information" },
-			{ "in", 'i', 1, "input data to sign" },
-			{ "out", 'o', 1, "output file for signature" },
+			{ "help", 'h', 0, "Show usage information" },
+			{ "in", 'i', 1, "Input data to sign" },
+			{ "out", 'o', 1, "Output file for signature" },
 		}
 	});
 }
