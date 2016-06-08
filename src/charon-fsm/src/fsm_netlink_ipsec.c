@@ -650,9 +650,11 @@ static status_t populate_v6_sa(struct nss_nlipsec_rule *rule_ptr,
 	return status;
 }
 
+#define BOOL_TO_STR(val) ((val) ? "true" : "false")
+
 static status_t populate_sa_data(struct nss_nlipsec_rule *rule_ptr,
 	u_int32_t crypto_index, u_int16_t icv_len, u_int16_t replay_win, bool nat,
-	bool seq_skip, bool trailer_skip, bool use_pattern)
+	bool seq_skip, bool trailer_skip, bool use_pattern, u_int32_t mark)
 {
 	status_t status = SUCCESS;
 	struct nss_ipsecmgr_sa_data *sa_data = NULL;
@@ -665,14 +667,28 @@ static status_t populate_sa_data(struct nss_nlipsec_rule *rule_ptr,
 	sa_data = &rule_ptr->msg.data;
 	sa_data->crypto_index = crypto_index;
 	sa_data->use_pattern = use_pattern;
-	sa_data->esp.icv_len = icv_len;
+	sa_data->esp.icv_len = (uint8_t)icv_len;
 	sa_data->esp.replay_win = replay_win;
 	sa_data->esp.nat_t_req = nat;
 	sa_data->esp.seq_skip = seq_skip;
 	sa_data->esp.trailer_skip = trailer_skip;
 
-	DBG2(DBG_KNL, "%s: crypto %u icv_len %u replay_win %u", __FUNCTION__,
-		sa_data->crypto_index, sa_data->esp.icv_len, sa_data->esp.replay_win);
+	if (mark > NSS_IPSECMGR_MAX_DSCP)
+	{
+		sa_data->esp.dscp = 0;
+		sa_data->esp.dscp_copy = TRUE;
+	}
+	else
+	{
+		sa_data->esp.dscp = (uint8_t)mark;
+		sa_data->esp.dscp_copy = FALSE;
+	}
+
+	DBG2(DBG_KNL,
+		"%s: crypto %u icv_len %u replay_win %u nat %s dscp %u dscp copy %s",
+		__FUNCTION__, sa_data->crypto_index, sa_data->esp.icv_len,
+		sa_data->esp.replay_win, BOOL_TO_STR(sa_data->esp.nat_t_req),
+		sa_data->esp.dscp, BOOL_TO_STR(sa_data->esp.dscp_copy));
 
 	return status;
 }
@@ -743,7 +759,7 @@ METHOD(fsm_netlink_ipsec_t, add_encap_flow, status_t,
 	u_int32_t protocol_nh, u_int32_t *outer_src, u_int32_t *outer_dst,
 	u_int32_t outer_family, u_int32_t spi, u_int32_t ttl_hl,
 	u_int32_t crypto_index, u_int16_t icv_len, u_int16_t replay_win, bool nat,
-	bool seq_skip, bool trailer_skip, bool use_pattern)
+	bool seq_skip, bool trailer_skip, bool use_pattern, u_int32_t mark)
 {
 	status_t status = SUCCESS;
 	struct nss_nlipsec_rule rule = { { 0 } };
@@ -764,7 +780,7 @@ METHOD(fsm_netlink_ipsec_t, add_encap_flow, status_t,
 	}
 
 	status = populate_sa_data(&rule, crypto_index, icv_len, replay_win, nat,
-		seq_skip, trailer_skip, use_pattern);
+		seq_skip, trailer_skip, use_pattern, mark);
 	if (status != SUCCESS)
 	{
 		return status;
@@ -861,7 +877,7 @@ METHOD(fsm_netlink_ipsec_t, add_encap_subnet, status_t,
 	u_int32_t protocol_nh, u_int32_t *outer_src, u_int32_t *outer_dst,
 	u_int32_t outer_family, u_int32_t spi, u_int32_t ttl_hl,
 	u_int32_t crypto_index, u_int16_t icv_len, u_int16_t replay_win, bool nat,
-	bool seq_skip, bool trailer_skip, bool use_pattern)
+	bool seq_skip, bool trailer_skip, bool use_pattern, u_int32_t mark)
 {
 	status_t status = SUCCESS;
 	struct nss_nlipsec_rule rule = { { 0 } };
@@ -882,7 +898,7 @@ METHOD(fsm_netlink_ipsec_t, add_encap_subnet, status_t,
 	}
 
 	status = populate_sa_data(&rule, crypto_index, icv_len, replay_win, nat,
-		seq_skip, trailer_skip, use_pattern);
+		seq_skip, trailer_skip, use_pattern, mark);
 	if (status != SUCCESS)
 	{
 		return status;
@@ -1019,8 +1035,11 @@ METHOD(fsm_netlink_ipsec_t, add_decap_sa, status_t,
 		return status;
 	}
 
+	/* Note: The mark value is passed as 0 because the DSCP mark is only
+	 * ever modified on outbound (encap) traffic.
+	 */
 	status = populate_sa_data(&rule, crypto_index, icv_len, replay_win, nat,
-		seq_skip, trailer_skip, use_pattern);
+		seq_skip, trailer_skip, use_pattern, 0);
 	if (status != SUCCESS)
 	{
 		return status;
