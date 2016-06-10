@@ -596,9 +596,9 @@ static status_t populate_v6_encap_subnet(struct nss_nlipsec_rule *rule_ptr,
 
 	rule_ptr->msg.flow.type = NSS_IPSECMGR_FLOW_TYPE_V6_SUBNET;
 	v6_subnet = &rule_ptr->msg.flow.data.v6_subnet;
-	memcpy(&v6_subnet->dst_subnet[0], &subnet[2],
+	memcpy(&v6_subnet->dst_subnet[0], &subnet[0],
 		sizeof(v6_subnet->dst_subnet));
-	memcpy(&v6_subnet->dst_mask[0], &mask[2], sizeof(v6_subnet->dst_mask));
+	memcpy(&v6_subnet->dst_mask[0], &mask[0], sizeof(v6_subnet->dst_mask));
 	v6_subnet->next_hdr = proto;
 
 	DBG2(DBG_KNL, "%s: subnet %b\nmask %b",
