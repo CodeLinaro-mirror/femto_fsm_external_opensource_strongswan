@@ -2079,15 +2079,22 @@ METHOD(kernel_ipsec_t, add_policy, status_t,
 	 * host-subnet - Handled with an encap subnet rule for the dst subnet
 	 * subnet-host - Handled with an encap subnet rule which specifies the host
 	 * subnet-subnet - Handled with an encap subnet rule for the dst subnet
+	 *
+	 * Another special case is where a host is specified without a protocol.
+	 * These are programmed as subnet rules, as NSS can only handle them as
+	 * such.
 	 */
-	if (src_ts->is_host(src_ts, NULL) && dst_ts->is_host(dst_ts, NULL))
+	if (src_ts->is_host(src_ts, NULL) && dst_ts->is_host(dst_ts, NULL) &&
+		dst_ts->get_protocol(dst_ts))
 	{
 		/* host-host */
 		status = add_encap_flow(this, currsa, src_ts, dst_ts, ts_family);
 	}
 	else
 	{
-		/* host-subnet, subnet-host, and subnet-subnet */
+		/* host-subnet, subnet-host, and subnet-subnet, and host-host where
+		 * the protocol is %any.
+		 */
 		status = add_encap_subnet(this, currsa, dst_ts, ts_family);
 	}
 
