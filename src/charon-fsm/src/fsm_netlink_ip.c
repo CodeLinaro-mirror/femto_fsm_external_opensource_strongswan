@@ -362,7 +362,7 @@ static status_t del_v6_flow(private_fsm_netlink_ip_t *this, u_int32_t *src,
 	struct nss_ipv6_5tuple *v6_tuple = &v6_rule.nim.msg.rule_destroy.tuple;
 
 	memcpy(v6_tuple->flow_ip, src, sizeof(v6_tuple->flow_ip));
-	memcpy(v6_tuple->return_ip, src, sizeof(v6_tuple->return_ip));
+	memcpy(v6_tuple->return_ip, dst, sizeof(v6_tuple->return_ip));
 	v6_tuple->protocol = proto;
 	v6_tuple->flow_ident = src_port;
 	v6_tuple->return_ident = dst_port;
