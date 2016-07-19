@@ -186,11 +186,6 @@ typedef struct flow_t flow_t;
 struct flow_t
 {
 	/**
-	 * Reference count
-	 */
-	refcount_t ref;
-
-	/**
 	 * flow rule tuple
 	 */
 	struct
@@ -246,6 +241,11 @@ struct tunnel_t
 	 * Mutex to protect this tunnel.
 	 */
 	mutex_t *mutex;
+
+	/**
+	 * Flow rule for this tunnel.
+	 */
+	flow_t *flow;
 };
 
 
@@ -306,11 +306,6 @@ struct sa_t
 	 * Crypto index for this SA.
 	 */
 	u_int32_t crypto_index;
-
-	/**
-	 * Flow rule for this SA.
-	 */
-	flow_t *flow;
 
 	/**
 	 * Mutex to protect this SA.
@@ -439,16 +434,6 @@ static bool match_route_by_subnet_ifname(iproute_t *route, host_t *subnet,
 	}
 	return (route->subnet->equals(route->subnet, subnet) &&
 		!strncmp(route->ifname, ifname, sizeof(route->ifname)));
-}
-
-static bool match_sa_by_reqid_inbound(sa_t *item, u_int32_t *reqid,
-	bool *inbound)
-{
-	if (!item || !reqid || !inbound)
-	{
-		return FALSE;
-	}
-	return ((item->decap == *inbound) && (item->reqid == *reqid));
 }
 
 static bool match_sa_by_spi_and_ips(sa_t *item, u_int32_t *spi,
@@ -667,8 +652,9 @@ static status_t delete_route(iproute_t *route, mutex_t *mutex,
 	list->remove(list, route, NULL);
 	mutex->unlock(mutex);
 	DBG2(DBG_KNL,
-		"%s: Removing route for dst_net %H prefix %u ifname %s",
-		__FUNCTION__, route->subnet, route->prefixlen, route->ifname);
+		"%s: Removing route for dst_net %H prefix %u gw %H ifname %s src_ip %H",
+		__FUNCTION__, route->subnet, route->prefixlen, route->gw, route->ifname,
+		route->src_ip);
 	addr = route->subnet->get_address(route->subnet);
 	if (!addr.ptr || !addr.len)
 	{
@@ -680,8 +666,9 @@ static status_t delete_route(iproute_t *route, mutex_t *mutex,
 	if (status != SUCCESS)
 	{
 		DBG2(DBG_KNL,
-		"%s: Failed to remove route for dst_net %H prefix %u ifname %s",
-		__FUNCTION__, route->subnet, route->prefixlen, route->ifname);
+		"%s: Failed to remove route for dst_net %H prefix %u gw %H ifname %s "
+		"src_ip %H", __FUNCTION__, route->subnet, route->prefixlen, route->gw,
+		route->ifname, route->src_ip);
 	}
 
 	DESTROY_IF(route->subnet);
@@ -747,6 +734,20 @@ static status_t destroy_tunnel(private_fsm_kernel_ipsec_t *this,
 		return INVALID_ARG;
 	}
 
+	/* Delete flow rule */
+	if (tunnel->flow)
+	{
+		if (tunnel->flow->nl_ip)
+		{
+			tunnel->flow->nl_ip->del_flow(tunnel->flow->nl_ip,
+				&tunnel->flow->tuple.src[0], tunnel->flow->tuple.src_port,
+				&tunnel->flow->tuple.dst[0], tunnel->flow->tuple.dst_port,
+				tunnel->flow->tuple.proto);
+		}
+		free(tunnel->flow);
+		tunnel->flow = NULL;
+	}
+
 	status = this->nl_ipsec->destroy_tunnel(this->nl_ipsec, tunnel->ifname);
 	if (status != SUCCESS)
 	{
@@ -792,16 +793,6 @@ static void delete_sa(sa_t *sa, private_fsm_kernel_ipsec_t *this)
 
 	/* Delete the rules */
 	flush_rules(sa, this);
-
-	/* Delete flow rule (if applicable) */
-	if (sa->flow && ref_put(&sa->flow->ref) && sa->flow->nl_ip)
-	{
-		sa->flow->nl_ip->del_flow(sa->flow->nl_ip, &sa->flow->tuple.src[0],
-			sa->flow->tuple.src_port, &sa->flow->tuple.dst[0],
-			sa->flow->tuple.dst_port, sa->flow->tuple.proto);
-		free(sa->flow);
-		sa->flow = NULL;
-	}
 
 	/* Delete the crypto rule */
 	this->nl_crypto->del_session(this->nl_crypto, sa->crypto_index);
@@ -1075,16 +1066,14 @@ static status_t add_ip_flow_rule(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 	char src_ifname[IFNAMSIZ];
 	char dst_ifname[IFNAMSIZ];
 
-	if (!this || !sa || !this->nl_ipv4 || !this->nl_ipv6)
+	if (!this || !sa || !this->nl_ipv4 || !this->nl_ipv6 || !sa->tunnel)
 	{
 		DBG2(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
 		status = INVALID_ARG;
 		goto errorexit;
 	}
 
-	INIT(flow,
-		.ref = 1,
-		);
+	INIT(flow);
 
 	if (!flow)
 	{
@@ -1143,55 +1132,19 @@ static status_t add_ip_flow_rule(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 		goto errorexit;
 	}
 
-	sa->flow = flow;
+	sa->tunnel->mutex->lock(sa->tunnel->mutex);
+	sa->tunnel->flow = flow;
+	sa->tunnel->mutex->unlock(sa->tunnel->mutex);
 
 errorexit:
 	if ((status != SUCCESS) && flow)
 	{
 		free(flow);
-		sa->flow = NULL;
+		sa->tunnel->mutex->lock(sa->tunnel->mutex);
+		sa->tunnel->flow = NULL;
+		sa->tunnel->mutex->unlock(sa->tunnel->mutex);
 	}
 
-	return status;
-}
-
-static status_t migrate_ip_flow_rule(private_fsm_kernel_ipsec_t *this,
-	sa_t *rekeysa, sa_t *sa)
-{
-	status_t status = FAILED;
-
-	if (!this || !sa || !rekeysa)
-	{
-		DBG2(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
-		status = INVALID_ARG;
-		goto errorexit;
-	}
-
-	/* First check the (unlikely) case that the flow rule is not valid on
-	 * the existing SA. If this is so, go ahead and create a new one.
-	 * Otherwise, proceed with migration.
-	 */
-	if (!rekeysa->flow)
-	{
-		DBG2(DBG_KNL, "%s: Warning - rekeysa flow rule is NULL!", __FUNCTION__);
-		status = add_ip_flow_rule(this, sa);
-		if (status != SUCCESS)
-		{
-			DBG2(DBG_KNL, "%s: Could not add flow rule for SPI 0x%08x %s",
-				__FUNCTION__, sa->spi, IPSEC_DIR_STR(sa->decap));
-			goto errorexit;
-		}
-	}
-	else
-	{
-		refcount_t ref;
-		ref = ref_get(&rekeysa->flow->ref);
-		DBG2(DBG_KNL, "%s: flow ref count %d", __FUNCTION__, ref);
-		sa->flow = rekeysa->flow;
-		status = SUCCESS;
-	}
-
-errorexit:
 	return status;
 }
 
@@ -1502,8 +1455,7 @@ static status_t add_route(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 	}
 
 	status = install_route(this, dst_ts, this->routes_mutex, this->routes,
-		&sa->tunnel->ifname[0],
-		((this->install_virtual_ip) ? sa->tunnel->vip : NULL));
+		&sa->tunnel->ifname[0], NULL);
 
 	if (status != SUCCESS)
 	{
@@ -1649,7 +1601,6 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 {
 	tunnel_t *tunnel = NULL;
 	sa_t *sa = NULL;
-	sa_t *rekeysa = NULL;
 	status_t status = FAILED;
 	host_t *lip = (inbound) ? dst : src;
 	host_t *rip = (inbound) ? src : dst;
@@ -1707,28 +1658,6 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 	}
 
 	sa = NULL;
-
-	/* We can tell if this SA is being rekeyed by matching the request
-	 * ID to an existing SA. Since we already have a flow rule established, we
-	 * need to migrate it to the new SA instead of recreating it.
-	 *
-	 * Also, we want to do this check here and now before the new SA is
-	 * added to the list, because it will have the same reqid and direction.
-	 */
-	this->sas_mutex->lock(this->sas_mutex);
-	status = this->sas->find_first(this->sas,
-		(linked_list_match_t)match_sa_by_reqid_inbound,
-		(void **)&rekeysa, &reqid, &inbound);
-	this->sas_mutex->unlock(this->sas_mutex);
-	if (status != SUCCESS)
-	{
-		rekeysa = NULL;
-	}
-	else
-	{
-		DBG2(DBG_KNL, "%s: src %H dst %H spi 0x%08x is rekeying to spi 0x%08x",
-			__FUNCTION__, src, dst, rekeysa->spi, spi);
-	}
 
 	/* Create an sa_t object */
 	INIT(sa,
@@ -1810,32 +1739,21 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 			goto delsa;
 		}
 
-		if (!rekeysa)
+		if (!tunnel->flow)
 		{
-			/* We aren't rekeying an existing SA, so we need a new flow rule */
+			/* Need an IP flow rule for this tunnel */
 			status = add_ip_flow_rule(this, sa);
 			if (status != SUCCESS)
 			{
-				DBG1(DBG_KNL, "%s: Failed to add flow rule for SPI 0x%08x %s",
-					__FUNCTION__, spi, IPSEC_DIR_STR(inbound));
+				DBG1(DBG_KNL, "%s: Failed to add flow rule for ifname %s",
+					__FUNCTION__, tunnel->ifname);
 				goto delsa;
 			}
 		}
 		else
 		{
-			/* We are rekeying. Migrate the flow rule. */
-			status = migrate_ip_flow_rule(this, rekeysa, sa);
-			if (status != SUCCESS)
-			{
-				DBG1(DBG_KNL,
-					"%s: Failed to migrate flow rule from SPI 0x%08x to "
-					"SPI 0x%08x %s",
-					__FUNCTION__, rekeysa->spi, spi, IPSEC_DIR_STR(inbound));
-				goto delsa;
-			}
-			DBG2(DBG_KNL, "%s: Migrated flow rule from SPI 0x%08x to "
-				"SPI 0x%08x %s",
-				__FUNCTION__, rekeysa->spi, spi, IPSEC_DIR_STR(inbound));
+			DBG2(DBG_KNL, "%s: Flow rule exists for ifname %s", __FUNCTION__,
+				tunnel->ifname);
 		}
 	}
 	else
@@ -1855,6 +1773,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 				{
 					DBG1(DBG_KNL, "%s: Failed to add route for %R",
 						__FUNCTION__, ts);
+					enumerator->destroy(enumerator);
 					goto delsa;
 				}
 			}
@@ -2323,6 +2242,7 @@ METHOD(fsm_kernel_ipsec_t, create_tunnel, status_t,
 		.ref = 1,
 		.ike_sa_id = ike_sa_id,
 		.mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
+		.flow = NULL,
 		);
 
 	if (!tunnel->mutex)
