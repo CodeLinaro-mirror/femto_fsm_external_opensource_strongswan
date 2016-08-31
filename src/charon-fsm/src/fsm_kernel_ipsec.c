@@ -2420,6 +2420,37 @@ METHOD(fsm_kernel_ipsec_t, delete_tunnel, status_t,
 	return status;
 }
 
+METHOD(fsm_kernel_ipsec_t, get_tunnel_iface, status_t,
+	private_fsm_kernel_ipsec_t *this, u_int32_t ike_sa_id, char **iface)
+{
+	status_t status = SUCCESS;
+	tunnel_t *tunnel = NULL;
+
+	if (!this || !this->tunnels_mutex || !this->tunnels || !iface)
+	{
+		return INVALID_ARG;
+	}
+
+	/* Find the tunnel */
+	this->tunnels_mutex->lock(this->tunnels_mutex);
+	status = this->tunnels->find_first(this->tunnels,
+		(linked_list_match_t)match_tunnel_by_id,
+		(void **)&tunnel, &ike_sa_id);
+	this->tunnels_mutex->unlock(this->tunnels_mutex);
+	if ((status != SUCCESS) || !tunnel)
+	{
+		DBG2(DBG_KNL, "%s: Could not find tunnel for IKE SA %u", __FUNCTION__,
+			ike_sa_id);
+		return FAILED;
+	}
+
+	tunnel->mutex->lock(tunnel->mutex);
+	*iface = &tunnel->ifname[0];
+	tunnel->mutex->unlock(tunnel->mutex);
+
+	return status;
+}
+
 METHOD(kernel_ipsec_t, destroy, void, private_fsm_kernel_ipsec_t *this)
 {
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec", __FUNCTION__);
@@ -2490,6 +2521,7 @@ fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
 			.create_tunnel = _create_tunnel,
 			.migrate_tunnel = _migrate_tunnel,
 			.delete_tunnel = _delete_tunnel,
+			.get_tunnel_iface = _get_tunnel_iface,
 		},
 		.tunnels = linked_list_create(),
 		.tunnels_mutex = mutex_create(MUTEX_TYPE_RECURSIVE),

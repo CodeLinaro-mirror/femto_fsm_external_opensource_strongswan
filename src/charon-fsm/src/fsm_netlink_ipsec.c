@@ -429,11 +429,11 @@ static status_t ipsec_send_msg(private_fsm_netlink_ipsec_t *this,
 	this->mutex->lock(this->mutex);
 	status = this->nl_sock->send_msg(this->nl_sock, &rule_ptr->cm,
 		rule_ptr);
-	this->mutex->unlock(this->mutex);
 
 	if (status != SUCCESS)
 	{
 		DBG2(DBG_KNL, "%s: failed to send message cmd: %u", __FUNCTION__, cmd);
+		this->mutex->unlock(this->mutex);
 		return status;
 	}
 
@@ -443,9 +443,11 @@ static status_t ipsec_send_msg(private_fsm_netlink_ipsec_t *this,
 	if (!this->err_sem->timed_wait(this->err_sem, IPSEC_DEFAULT_ERR_TIMEOUT))
 	{
 		DBG2(DBG_KNL, "%s: Error message received.", __FUNCTION__);
+		this->mutex->unlock(this->mutex);
 		return FAILED;
 	}
 
+	this->mutex->unlock(this->mutex);
 	return status;
 }
 
@@ -1200,8 +1202,8 @@ fsm_netlink_ipsec_t *fsm_netlink_ipsec_create(void)
 			.get_stats = _get_stats,
 			.destroy = _destroy,
 		},
-		.mutex = mutex_create(MUTEX_TYPE_DEFAULT),
-		.stats_mutex = mutex_create(MUTEX_TYPE_DEFAULT),
+		.mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
+		.stats_mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
 		.sem = semaphore_create(0),
 		.err_sem = semaphore_create(0),
 		);

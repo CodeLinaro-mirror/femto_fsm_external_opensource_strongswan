@@ -183,19 +183,17 @@ esac
 upstack() {
 	dovirtip add
 
-	if test "$?" = "0"
-	then
+	if test "$?" = "0"; then
 		if [ -n "${PLUTO_MY_SOURCEIP4_1+x}" ]; then
-			/opt/qcom/bin/tests/runBaseConfig ${PLUTO_MY_SOURCEIP4_1%/*}
+			/opt/qcom/bin/tests/runBaseConfig ${PLUTO_MY_SOURCEIP4_1%/*} ${PLUTO_PEER} ${PLUTO_INTERFACE}
 		elif [ -n "${PLUTO_MY_SOURCEIP6_1+x}" ]; then
-			/opt/qcom/bin/tests/runBaseConfigforV6 ${PLUTO_MY_SOURCEIP6_1%/*}
+			/opt/qcom/bin/tests/runBaseConfigforV6 ${PLUTO_MY_SOURCEIP6_1%/*} ${PLUTO_PEER} ${PLUTO_INTERFACE}
 		fi
 	fi
 
-	if [ $VPN_LOGGING ]
-	then
+	if [ $VPN_LOGGING ]; then
 		logger -t $TAG -p $FAC_PRIO -- \
-			"- Add IP ${PLUTO_MY_SOURCEIP%/*} ipsectun0 - Stack Up"
+			"- Add IP ${PLUTO_MY_SOURCEIP%/*} ${PLUTO_INTERFACE} - Stack Up"
 	fi
 }
 
@@ -205,85 +203,77 @@ downstack() {
 	if test "$?" = "0"
 	then
 		if [ -n "${PLUTO_MY_SOURCEIP4_1+x}" ]; then
-			/opt/qcom/bin/tests/runBaseConfig 0.0.0.0
+			/opt/qcom/bin/tests/runBaseConfig 0.0.0.0 ${PLUTO_PEER} ${PLUTO_INTERFACE}
 		elif [ -n "${PLUTO_MY_SOURCEIP6_1+x}" ]; then
-			/opt/qcom/bin/tests/runBaseConfigforV6 ::
+			/opt/qcom/bin/tests/runBaseConfigforV6 :: ${PLUTO_PEER} ${PLUTO_INTERFACE}
+
 		fi
 	fi
 
 	if [ $VPN_LOGGING ]
 	then
 		logger -t $TAG -p $FAC_PRIO -- \
-			"- Remove IP ${PLUTO_MY_SOURCEIP%/*} ipsectun0 - Stack Down"
+			"- Remove IP ${PLUTO_MY_SOURCEIP%/*} ${PLUTO_INTERFACE} - Stack Down"
 	fi
 }
 
 dovirtip() {
 	st=0
-	if test "$1" = "add"
-	then
-		if [ -n "${PLUTO_MY_SOURCEIP4_1+x}" ] \
-		       && ! ip -o route get ${PLUTO_MY_SOURCEIP4_1%/*} | grep -q ^local
+	it=""
+
+	case "$1" in
+	"add")
+		# Check if IP is already assigned.
+		if [ -n ${PLUTO_MY_SOURCEIP} ] && \
+			ip -o route get ${PLUTO_MY_SOURCEIP} | grep -q ^local
 		then
-			it="ip addr add ${PLUTO_MY_SOURCEIP4_1%/*}/32 dev ipsectun0"
-			oops="`eval $it 2>&1`"
-			st=$?
-			if test " $oops" = " " -a " $st" != " 0"
-			then
-				oops="silent error, exit status $st"
-			fi
-			if test " $oops" != " " -o " $st" != " 0"
-			then
-				echo "$0: addsource \`$it' failed ($oops)" >&2
-			fi
-		elif [ -n "${PLUTO_MY_SOURCEIP6_1+x}" ] \
-		       && ! ip -o route get ${PLUTO_MY_SOURCEIP6_1%/*} | grep -q ^local
-		then
-			it="ip addr add ${PLUTO_MY_SOURCEIP6_1%/*}/128 dev ipsectun0"
-			oops="`eval $it 2>&1`"
-			st=$?
-			if test " $oops" = " " -a " $st" != " 0"
-			then
-				oops="silent error, exit status $st"
-			fi
-			if test " $oops" != " " -o " $st" != " 0"
-			then
-				echo "$0: addsource \`$it' failed ($oops)" >&2
-			fi
-		else
-			st=1
+			# IP is already assigned, return success.
+			return 0
 		fi
-	else
-		if [ -n "${PLUTO_MY_SOURCEIP4_1+x}" ] && ip -o route get ${PLUTO_MY_SOURCEIP4_1%/*} | grep -q ^local
-		then
-			it="ip addr del ${PLUTO_MY_SOURCEIP4_1%/*}/32 dev ipsectun0"
-			oops="`eval $it 2>&1`"
-			st=$?
-			if test " $oops" = " " -a " $st" != " 0"
-			then
-				oops="silent error, exit status $st"
-			fi
-			if test " $oops" != " " -o " $st" != " 0"
-			then
-				echo "$0: delsource \`$it' failed ($oops)" >&2
-			fi
-		elif [ -n "${PLUTO_MY_SOURCEIP6_1+x}" ] && ip -o route get ${PLUTO_MY_SOURCEIP6_1%/*} | grep -q ^local
-		then
-			it="ip addr del ${PLUTO_MY_SOURCEIP6_1%/*}/128 dev ipsectun0"
-			oops="`eval $it 2>&1`"
-			st=$?
-			if test " $oops" = " " -a " $st" != " 0"
-			then
-				oops="silent error, exit status $st"
-			fi
-			if test " $oops" != " " -o " $st" != " 0"
-			then
-				echo "$0: delsource \`$it' failed ($oops)" >&2
-			fi
+
+		# Determine if it's an IPv4 or IPv6 address.
+		if [ -n "${PLUTO_MY_SOURCEIP4_1+x}" ]; then
+			it="ip addr add ${PLUTO_MY_SOURCEIP4_1%/*}/32 dev ${PLUTO_INTERFACE}"
+		elif [ -n "${PLUTO_MY_SOURCEIP6_1+x}" ]; then
+			it="ip addr add ${PLUTO_MY_SOURCEIP6_1%/*}/128 dev ${PLUTO_INTERFACE}"
 		else
-			st=1
+			return 1
 		fi
+		;;
+	"del")
+		# Check if IP is assigned.
+		if [ -n ${PLUTO_MY_SOURCEIP} ] && \
+			! ip -o route get ${PLUTO_MY_SOURCEIP} | grep -q ^local
+		then
+			# IP is not assigned, return success.
+			return 0
+		fi
+
+		# Determine if it's an IPv4 or IPv6 address.
+		if [ -n "${PLUTO_MY_SOURCEIP4_1+x}" ]; then
+			it="ip addr del ${PLUTO_MY_SOURCEIP4_1%/*}/32 dev ${PLUTO_INTERFACE}"
+		elif [ -n "${PLUTO_MY_SOURCEIP6_1+x}" ]; then
+			it="ip addr del ${PLUTO_MY_SOURCEIP6_1%/*}/128 dev ${PLUTO_INTERFACE}"
+		else
+			return 1
+		fi
+		;;
+	*)
+		return 1
+		;;
+	esac
+
+	# Run the command populated above and note errors.
+	oops="`eval $it 2>&1`"
+	st=$?
+	if test " $oops" = " " -a " $st" != " 0"; then
+		oops="silent error, exit status $st"
 	fi
+
+	if test " $oops" != " " -o " $st" != " 0"; then
+		echo "$0: \`$it' failed ($oops)" >&2
+	fi
+
 	return $st
 }
 
@@ -302,7 +292,7 @@ addsource() {
 	st=0
 	if [ -n "${PLUTO_MY_SOURCEIP4_1+x}" ] && ! ip -o route get ${PLUTO_MY_SOURCEIP4_1%/*} | grep -q ^local
 	then
-	    it="ip addr add ${PLUTO_MY_SOURCEIP4_1%/*}/32 dev ipsectun0"
+	    it="ip addr add ${PLUTO_MY_SOURCEIP4_1%/*}/32 dev ${PLUTO_INTERFACE}"
 	    oops="`eval $it 2>&1`"
 	    st=$?
 	    if test " $oops" = " " -a " $st" != " 0"
@@ -315,7 +305,7 @@ addsource() {
 	    fi
 	elif [ -n "${PLUTO_MY_SOURCEIP6_1+x}" ] && ! ip -o route get ${PLUTO_MY_SOURCEIP6_1%/*} | grep -q ^local
 	then
-	    it="ip addr add ${PLUTO_MY_SOURCEIP6_1%/*}/128 dev ipsectun0"
+	    it="ip addr add ${PLUTO_MY_SOURCEIP6_1%/*}/128 dev ${PLUTO_INTERFACE}"
 	    oops="`eval $it 2>&1`"
 	    st=$?
 	    if test " $oops" = " " -a " $st" != " 0"
@@ -363,7 +353,7 @@ doroute() {
 	else
 	    parms2="via $PLUTO_PEER"
 	fi
-	parms2="$parms2 dev ipsectun0"
+	parms2="$parms2 dev ${PLUTO_INTERFACE}"
 
 	parms3=
 	if [ -n "$PLUTO_MY_SOURCEIP4_1" ]
@@ -436,7 +426,7 @@ doroute_v6() {
 	else
 	    parms2="via $PLUTO_PEER"
 	fi
-	parms2="$parms2 dev ipsectun0"
+	parms2="$parms2 dev ${PLUTO_INTERFACE}"
 
 	parms3=
 	if [ -n "$PLUTO_MY_SOURCEIP6_1" ]
@@ -598,10 +588,10 @@ up-host:iptables)
 	# connection to me, with (left/right)firewall=yes, coming up
 	# This is used only by the default updown script, not by your custom
 	# ones, so do not mess with it; see CAUTION comment up at top.
-	iptables -I INPUT 1 -i ipsectun0 -p $PLUTO_MY_PROTOCOL \
+	iptables -I INPUT 1 -i ${PLUTO_INTERFACE} -p $PLUTO_MY_PROTOCOL \
 	    -s $PLUTO_PEER_CLIENT $S_PEER_PORT \
 	    -d $PLUTO_ME $D_MY_PORT $IPSEC_POLICY_IN -j ACCEPT
-	iptables -I OUTPUT 1 -o ipsectun0 -p $PLUTO_PEER_PROTOCOL \
+	iptables -I OUTPUT 1 -o ${PLUTO_INTERFACE} -p $PLUTO_PEER_PROTOCOL \
 	    -s $PLUTO_ME $S_MY_PORT $IPSEC_POLICY_OUT \
 	    -d $PLUTO_PEER_CLIENT $D_PEER_PORT -j ACCEPT
 	#
@@ -609,7 +599,7 @@ up-host:iptables)
 	# IPComp is used (for small inbound packets that are not compressed)
 	if [ -n "$PLUTO_IPCOMP" ]
 	then
-	  iptables -I INPUT 1 -i ipsectun0 -p 4 \
+	  iptables -I INPUT 1 -i ${PLUTO_INTERFACE} -p 4 \
 	      -s $PLUTO_PEER -d $PLUTO_ME $IPSEC_POLICY_IN -j ACCEPT
 	fi
 	#
@@ -631,17 +621,17 @@ down-host:iptables)
 	# connection to me, with (left/right)firewall=yes, going down
 	# This is used only by the default updown script, not by your custom
 	# ones, so do not mess with it; see CAUTION comment up at top.
-	iptables -D INPUT -i ipsectun0 -p $PLUTO_MY_PROTOCOL \
+	iptables -D INPUT -i ${PLUTO_INTERFACE} -p $PLUTO_MY_PROTOCOL \
 	    -s $PLUTO_PEER_CLIENT $S_PEER_PORT \
 	    -d $PLUTO_ME $D_MY_PORT $IPSEC_POLICY_IN -j ACCEPT
-	iptables -D OUTPUT -o ipsectun0 -p $PLUTO_PEER_PROTOCOL \
+	iptables -D OUTPUT -o ${PLUTO_INTERFACE} -p $PLUTO_PEER_PROTOCOL \
 	    -s $PLUTO_ME $S_MY_PORT $IPSEC_POLICY_OUT \
 	    -d $PLUTO_PEER_CLIENT $D_PEER_PORT -j ACCEPT
 	#
 	# IPIP exception teardown
 	if [ -n "$PLUTO_IPCOMP" ]
 	then
-	  iptables -D INPUT -i ipsectun0 -p 4 \
+	  iptables -D INPUT -i ${PLUTO_INTERFACE} -p 4 \
 	      -s $PLUTO_PEER -d $PLUTO_ME $IPSEC_POLICY_IN -j ACCEPT
 	fi
 	#
@@ -665,10 +655,10 @@ up-client:iptables)
 	# ones, so do not mess with it; see CAUTION comment up at top.
 	if [ "$PLUTO_PEER_CLIENT" != "$PLUTO_MY_SOURCEIP4_1/32" ]
 	then
-	  iptables -I FORWARD 1 -o ipsectun0 -p $PLUTO_PEER_PROTOCOL \
+	  iptables -I FORWARD 1 -o ${PLUTO_INTERFACE} -p $PLUTO_PEER_PROTOCOL \
 	      -s $PLUTO_MY_CLIENT $S_MY_PORT \
 	      -d $PLUTO_PEER_CLIENT $D_PEER_PORT $IPSEC_POLICY_OUT -j ACCEPT
-	  iptables -I FORWARD 1 -i ipsectun0 -p $PLUTO_MY_PROTOCOL \
+	  iptables -I FORWARD 1 -i ${PLUTO_INTERFACE} -p $PLUTO_MY_PROTOCOL \
 	      -s $PLUTO_PEER_CLIENT $S_PEER_PORT \
 	      -d $PLUTO_MY_CLIENT $D_MY_PORT $IPSEC_POLICY_IN -j ACCEPT
 	fi
@@ -677,10 +667,10 @@ up-client:iptables)
 	# or sometimes host access via the internal IP is needed
 	if [ -n "$PLUTO_MY_SOURCEIP4_1" -o -n "$PLUTO_HOST_ACCESS" ]
 	then
-	  iptables -I INPUT 1 -i ipsectun0 -p $PLUTO_MY_PROTOCOL \
+	  iptables -I INPUT 1 -i ${PLUTO_INTERFACE} -p $PLUTO_MY_PROTOCOL \
 	      -s $PLUTO_PEER_CLIENT $S_PEER_PORT \
 	      -d $PLUTO_MY_CLIENT $D_MY_PORT $IPSEC_POLICY_IN -j ACCEPT
-	  iptables -I OUTPUT 1 -o ipsectun0 -p $PLUTO_PEER_PROTOCOL \
+	  iptables -I OUTPUT 1 -o ${PLUTO_INTERFACE} -p $PLUTO_PEER_PROTOCOL \
 	      -s $PLUTO_MY_CLIENT $S_MY_PORT \
 	      -d $PLUTO_PEER_CLIENT $D_PEER_PORT $IPSEC_POLICY_OUT -j ACCEPT
 	fi
@@ -690,7 +680,7 @@ up-client:iptables)
 	# INPUT is correct here even for forwarded traffic.
 	if [ -n "$PLUTO_IPCOMP" ]
 	then
-	  iptables -I INPUT 1 -i ipsectun0 -p 4 \
+	  iptables -I INPUT 1 -i ${PLUTO_INTERFACE} -p 4 \
 	      -s $PLUTO_PEER -d $PLUTO_ME $IPSEC_POLICY_IN -j ACCEPT
 	fi
 	#
@@ -714,11 +704,11 @@ down-client:iptables)
 	# ones, so do not mess with it; see CAUTION comment up at top.
 	if [ "$PLUTO_PEER_CLIENT" != "$PLUTO_MY_SOURCEIP4_1/32" ]
 	then
-	  iptables -D FORWARD -o ipsectun0 -p $PLUTO_PEER_PROTOCOL \
+	  iptables -D FORWARD -o ${PLUTO_INTERFACE} -p $PLUTO_PEER_PROTOCOL \
 	      -s $PLUTO_MY_CLIENT $S_MY_PORT \
 	      -d $PLUTO_PEER_CLIENT $D_PEER_PORT \
 	         $IPSEC_POLICY_OUT -j ACCEPT
-	  iptables -D FORWARD -i ipsectun0 -p $PLUTO_MY_PROTOCOL \
+	  iptables -D FORWARD -i ${PLUTO_INTERFACE} -p $PLUTO_MY_PROTOCOL \
 	      -s $PLUTO_PEER_CLIENT $S_PEER_PORT \
 	      -d $PLUTO_MY_CLIENT $D_MY_PORT \
 	         $IPSEC_POLICY_IN -j ACCEPT
@@ -728,11 +718,11 @@ down-client:iptables)
 	# or sometimes host access via the internal IP is needed
 	if [ -n "$PLUTO_MY_SOURCEIP4_1" -o -n "$PLUTO_HOST_ACCESS" ]
 	then
-	  iptables -D INPUT -i ipsectun0 -p $PLUTO_MY_PROTOCOL \
+	  iptables -D INPUT -i ${PLUTO_INTERFACE} -p $PLUTO_MY_PROTOCOL \
 	      -s $PLUTO_PEER_CLIENT $S_PEER_PORT \
 	      -d $PLUTO_MY_CLIENT $D_MY_PORT \
 	         $IPSEC_POLICY_IN -j ACCEPT
-	  iptables -D OUTPUT -o ipsectun0 -p $PLUTO_PEER_PROTOCOL \
+	  iptables -D OUTPUT -o ${PLUTO_INTERFACE} -p $PLUTO_PEER_PROTOCOL \
 	      -s $PLUTO_MY_CLIENT $S_MY_PORT \
 	      -d $PLUTO_PEER_CLIENT $D_PEER_PORT \
 	         $IPSEC_POLICY_OUT -j ACCEPT
@@ -741,7 +731,7 @@ down-client:iptables)
 	# IPIP exception teardown
 	if [ -n "$PLUTO_IPCOMP" ]
 	then
-	  iptables -D INPUT -i ipsectun0 -p 4 \
+	  iptables -D INPUT -i ${PLUTO_INTERFACE} -p 4 \
 	      -s $PLUTO_PEER -d $PLUTO_ME $IPSEC_POLICY_IN -j ACCEPT
 	fi
 	#
@@ -837,10 +827,10 @@ up-host-v6:iptables)
 	# connection to me, with (left/right)firewall=yes, coming up
 	# This is used only by the default updown script, not by your custom
 	# ones, so do not mess with it; see CAUTION comment up at top.
-	ip6tables -I INPUT 1 -i ipsectun0 -p $PLUTO_MY_PROTOCOL \
+	ip6tables -I INPUT 1 -i ${PLUTO_INTERFACE} -p $PLUTO_MY_PROTOCOL \
 	    -s $PLUTO_PEER_CLIENT $S_PEER_PORT \
 	    -d $PLUTO_ME $D_MY_PORT $IPSEC_POLICY_IN -j ACCEPT
-	ip6tables -I OUTPUT 1 -o ipsectun0 -p $PLUTO_PEER_PROTOCOL \
+	ip6tables -I OUTPUT 1 -o ${PLUTO_INTERFACE} -p $PLUTO_PEER_PROTOCOL \
 	    -s $PLUTO_ME $S_MY_PORT $IPSEC_POLICY_OUT \
 	    -d $PLUTO_PEER_CLIENT $D_PEER_PORT -j ACCEPT
 	#
@@ -862,10 +852,10 @@ down-host-v6:iptables)
 	# connection to me, with (left/right)firewall=yes, going down
 	# This is used only by the default updown script, not by your custom
 	# ones, so do not mess with it; see CAUTION comment up at top.
-	ip6tables -D INPUT -i ipsectun0 -p $PLUTO_MY_PROTOCOL \
+	ip6tables -D INPUT -i ${PLUTO_INTERFACE} -p $PLUTO_MY_PROTOCOL \
 	    -s $PLUTO_PEER_CLIENT $S_PEER_PORT \
 	    -d $PLUTO_ME $D_MY_PORT $IPSEC_POLICY_IN -j ACCEPT
-	ip6tables -D OUTPUT -o ipsectun0 -p $PLUTO_PEER_PROTOCOL \
+	ip6tables -D OUTPUT -o ${PLUTO_INTERFACE} -p $PLUTO_PEER_PROTOCOL \
 	    -s $PLUTO_ME $S_MY_PORT $IPSEC_POLICY_OUT \
 	    -d $PLUTO_PEER_CLIENT $D_PEER_PORT -j ACCEPT
 	#
@@ -889,10 +879,10 @@ up-client-v6:iptables)
 	# ones, so do not mess with it; see CAUTION comment up at top.
 	if [ "$PLUTO_PEER_CLIENT" != "$PLUTO_MY_SOURCEIP6_1/128" ]
 	then
-	  ip6tables -I FORWARD 1 -o ipsectun0 -p $PLUTO_PEER_PROTOCOL \
+	  ip6tables -I FORWARD 1 -o ${PLUTO_INTERFACE} -p $PLUTO_PEER_PROTOCOL \
 	      -s $PLUTO_MY_CLIENT $S_MY_PORT \
 	      -d $PLUTO_PEER_CLIENT $D_PEER_PORT $IPSEC_POLICY_OUT -j ACCEPT
-	  ip6tables -I FORWARD 1 -i ipsectun0 -p $PLUTO_MY_PROTOCOL \
+	  ip6tables -I FORWARD 1 -i ${PLUTO_INTERFACE} -p $PLUTO_MY_PROTOCOL \
 	      -s $PLUTO_PEER_CLIENT $S_PEER_PORT \
 	      -d $PLUTO_MY_CLIENT $D_MY_PORT $IPSEC_POLICY_IN -j ACCEPT
 	fi
@@ -901,10 +891,10 @@ up-client-v6:iptables)
 	# or sometimes host access via the internal IP is needed
 	if [ -n "$PLUTO_MY_SOURCEIP6_1" -o -n "$PLUTO_HOST_ACCESS" ]
 	then
-	  ip6tables -I INPUT 1 -i ipsectun0 -p $PLUTO_MY_PROTOCOL \
+	  ip6tables -I INPUT 1 -i ${PLUTO_INTERFACE} -p $PLUTO_MY_PROTOCOL \
 	      -s $PLUTO_PEER_CLIENT $S_PEER_PORT \
 	      -d $PLUTO_MY_CLIENT $D_MY_PORT $IPSEC_POLICY_IN -j ACCEPT
-	  ip6tables -I OUTPUT 1 -o ipsectun0 -p $PLUTO_PEER_PROTOCOL \
+	  ip6tables -I OUTPUT 1 -o ${PLUTO_INTERFACE} -p $PLUTO_PEER_PROTOCOL \
 	      -s $PLUTO_MY_CLIENT $S_MY_PORT \
 	      -d $PLUTO_PEER_CLIENT $D_PEER_PORT $IPSEC_POLICY_OUT -j ACCEPT
 	fi
@@ -929,11 +919,11 @@ down-client-v6:iptables)
 	# ones, so do not mess with it; see CAUTION comment up at top.
 	if [ "$PLUTO_PEER_CLIENT" != "$PLUTO_MY_SOURCEIP6_1/128" ]
 	then
-	  ip6tables -D FORWARD -o ipsectun0 -p $PLUTO_PEER_PROTOCOL \
+	  ip6tables -D FORWARD -o ${PLUTO_INTERFACE} -p $PLUTO_PEER_PROTOCOL \
 	      -s $PLUTO_MY_CLIENT $S_MY_PORT \
 	      -d $PLUTO_PEER_CLIENT $D_PEER_PORT \
 	         $IPSEC_POLICY_OUT -j ACCEPT
-	  ip6tables -D FORWARD -i ipsectun0 -p $PLUTO_MY_PROTOCOL \
+	  ip6tables -D FORWARD -i ${PLUTO_INTERFACE} -p $PLUTO_MY_PROTOCOL \
 	      -s $PLUTO_PEER_CLIENT $S_PEER_PORT \
 	      -d $PLUTO_MY_CLIENT $D_MY_PORT \
 	         $IPSEC_POLICY_IN -j ACCEPT
@@ -943,11 +933,11 @@ down-client-v6:iptables)
 	# or sometimes host access via the internal IP is needed
 	if [ -n "$PLUTO_MY_SOURCEIP6_1" -o -n "$PLUTO_HOST_ACCESS" ]
 	then
-	  ip6tables -D INPUT -i ipsectun0 -p $PLUTO_MY_PROTOCOL \
+	  ip6tables -D INPUT -i ${PLUTO_INTERFACE} -p $PLUTO_MY_PROTOCOL \
 	      -s $PLUTO_PEER_CLIENT $S_PEER_PORT \
 	      -d $PLUTO_MY_CLIENT $D_MY_PORT \
 	         $IPSEC_POLICY_IN -j ACCEPT
-	  ip6tables -D OUTPUT -o ipsectun0 -p $PLUTO_PEER_PROTOCOL \
+	  ip6tables -D OUTPUT -o ${PLUTO_INTERFACE} -p $PLUTO_PEER_PROTOCOL \
 	      -s $PLUTO_MY_CLIENT $S_MY_PORT \
 	      -d $PLUTO_PEER_CLIENT $D_PEER_PORT \
 	         $IPSEC_POLICY_OUT -j ACCEPT
