@@ -156,11 +156,11 @@ static status_t ip_send_msg(private_fsm_netlink_ip_t *this, void *rulePtr,
 	/* send message */
 	this->mutex->lock(this->mutex);
 	status = this->nl_sock->send_msg(this->nl_sock, cm, rulePtr);
-	this->mutex->unlock(this->mutex);
 
 	if (status != SUCCESS)
 	{
 		DBG2(DBG_KNL, "%s: failed to send message cmd: %u", __FUNCTION__, cmd);
+		this->mutex->unlock(this->mutex);
 		return status;
 	}
 
@@ -171,9 +171,11 @@ static status_t ip_send_msg(private_fsm_netlink_ip_t *this, void *rulePtr,
 		IP_DEFAULT_ERR_TIMEOUT))
 	{
 		DBG2(DBG_KNL, "%s: Error message received.", __FUNCTION__);
+		this->mutex->unlock(this->mutex);
 		return FAILED;
 	}
 
+	this->mutex->unlock(this->mutex);
 	return status;
 }
 
@@ -456,7 +458,7 @@ fsm_netlink_ip_t *fsm_netlink_ip_create(u_int32_t family)
 			.del_flow = _del_flow,
 			.destroy = _destroy,
 		},
-		.mutex = mutex_create(MUTEX_TYPE_DEFAULT),
+		.mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
 		.err_sem = semaphore_create(0),
 		.family = family,
 		);

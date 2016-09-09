@@ -86,7 +86,7 @@ METHOD(private_key_t, sign, bool, private_fsm_private_key_t *this,
 
 	memcpy(req.buf, data.ptr, data.len);
 
-	DBG3(DBG_IKE, "data: %#b", req.buf, MAX_DATA_SIZE_BYTES);
+	DBG3(DBG_IKE, "data: %#b", req.buf, req.buflen);
 
 	ret = tre_ike_rsa_sign(&req, &rsp);
 

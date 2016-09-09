@@ -46,6 +46,12 @@ struct fsm_kernel_ipsec_t
 	 * Delete a tunnel associated with the given IKE SA
 	 */
 	status_t (*delete_tunnel)(fsm_kernel_ipsec_t *this, u_int32_t ike_sa_id);
+
+	/**
+	 * Get the tunnel interface associated with the given IKE SA
+	 */
+	status_t (*get_tunnel_iface)(fsm_kernel_ipsec_t *this, u_int32_t ike_sa_id,
+		char **iface);
 };
 
 /**

@@ -261,10 +261,8 @@ static status_t crypto_send_msg(private_fsm_netlink_crypto_t *this,
 	nss_nlcrypto_rule_init(rule_ptr, (enum nss_nlcrypto_cmd)cmd);
 
 	/* send message */
-	this->mutex->lock(this->mutex);
 	status = this->nl_sock->send_msg(this->nl_sock, &rule_ptr->cm,
 		rule_ptr);
-	this->mutex->unlock(this->mutex);
 
 	if (status != SUCCESS)
 	{
@@ -350,10 +348,8 @@ CALLBACK(crypto_resp, void, private_fsm_netlink_crypto_t *this,
 				info_ptr->cipher.key_len, info_ptr->auth.algo,
 				info_ptr->auth.key_len);
 
-			this->mutex->lock(this->mutex);
 			memcpy(&this->last_update_info, info_ptr, info_len);
 			this->last_sess_idx = info_ptr->session_idx;
-			this->mutex->unlock(this->mutex);
 
 			this->sem->post(this->sem);
 			break;
@@ -371,7 +367,8 @@ METHOD(fsm_netlink_crypto_t, del_session, status_t,
 	struct nss_nlcrypto_rule rule = { { 0 } };
 	status_t status = SUCCESS;
 
-	DBG2(DBG_KNL, "Entering %s in fsm_netlink_crypto", __FUNCTION__);
+	DBG2(DBG_KNL, "Entering %s in fsm_netlink_crypto idx %u", __FUNCTION__,
+		sess_idx);
 
 	if (!this)
 	{
@@ -381,13 +378,16 @@ METHOD(fsm_netlink_crypto_t, del_session, status_t,
 	/* Copy the session info to the rule */
 	rule.msg.destroy.session_idx = sess_idx;
 
+	this->mutex->lock(this->mutex);
 	status = crypto_send_msg(this, &rule, NSS_NLCRYPTO_CMD_DESTROY_SESSION);
 	if (status != SUCCESS)
 	{
 		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
+		this->mutex->unlock(this->mutex);
 		return status;
 	}
 
+	this->mutex->unlock(this->mutex);
 	return status;
 }
 
@@ -464,23 +464,25 @@ METHOD(fsm_netlink_crypto_t, add_session, status_t,
 		encryption_algorithm_names, enc_alg, enc_key.len,
 		integrity_algorithm_names, int_alg, int_key.len);
 
+	this->mutex->lock(this->mutex);
 	/* Send the message */
 	status = crypto_send_msg(this, &rule, NSS_NLCRYPTO_CMD_CREATE_SESSION);
 	if (status != SUCCESS)
 	{
 		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
+		this->mutex->unlock(this->mutex);
 		return status;
 	}
 
 	/* Wait for response. */
 	if (!this->sem->timed_wait(this->sem, CRYPTO_DEFAULT_TIMEOUT))
 	{
-		this->mutex->lock(this->mutex);
 		*sess_idx_ptr = this->last_sess_idx;
-		this->mutex->unlock(this->mutex);
+		DBG2(DBG_KNL, "%s: idx %u assigned", __FUNCTION__, *sess_idx_ptr);
 	} else
 	{
 		DBG2(DBG_KNL, "%s: Timed out waiting for response", __FUNCTION__);
+		this->mutex->unlock(this->mutex);
 		return FAILED;
 	}
 
@@ -525,9 +527,11 @@ METHOD(fsm_netlink_crypto_t, add_session, status_t,
 	{
 		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
 		del_session(this, *sess_idx_ptr);
+		this->mutex->unlock(this->mutex);
 		return status;
 	}
 
+	this->mutex->unlock(this->mutex);
 	return status;
 }
 
@@ -568,7 +572,7 @@ fsm_netlink_crypto_t *fsm_netlink_crypto_create(void)
 			.del_session = _del_session,
 			.destroy = _destroy,
 		},
-		.mutex = mutex_create(MUTEX_TYPE_DEFAULT),
+		.mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
 		.sem = semaphore_create(0),
 		.err_sem = semaphore_create(0),
 		);
