@@ -76,7 +76,7 @@ METHOD(public_key_t, get_type, key_type_t,
 struct schemes_t
 {
 	signature_scheme_t scheme;
-	int32_t hash;
+	ce_hash_idx_t hash;
 };
 
 static struct schemes_t schemes[] =
@@ -103,21 +103,35 @@ static bool scheme_supported(signature_scheme_t scheme)
 	return result;
 }
 
-static int32_t get_hash_idx_from_scheme(signature_scheme_t scheme)
+static status_t get_hash_idx_from_scheme(signature_scheme_t scheme,
+	ce_hash_idx_t *hash)
 {
-	int32_t result = -1;
+	ce_hash_idx_t result;
 	int32_t index = 0;
+	bool found = FALSE;
+
+	if (!hash)
+	{
+		return FAILED;
+	}
 
 	for (index = 0; index < NUM_SCHEMES; index++)
 	{
 		if (schemes[index].scheme == scheme)
 		{
 			result = schemes[index].hash;
+			found = TRUE;
 			break;
 		}
 	}
 
-	return result;
+	if (!found)
+	{
+		return FAILED;
+	}
+
+	*hash = result;
+	return SUCCESS;
 }
 
 METHOD(public_key_t, verify, bool, private_fsm_public_key_t *this,
@@ -129,6 +143,7 @@ METHOD(public_key_t, verify, bool, private_fsm_public_key_t *this,
 	bool success = FALSE;
 	size_t len = 0;
 	u_int32_t idx = 0;
+	status_t status = FAILED;
 
 	DBG2(DBG_IKE, "Entering %s in fsm_public_key", __FUNCTION__);
 
@@ -157,14 +172,14 @@ METHOD(public_key_t, verify, bool, private_fsm_public_key_t *this,
 	memset(&ike_verify_req, 0, sizeof(tre_ike_verify_sign_cmd_t));
 	memset(&ike_verify_rsp, 0, sizeof(tre_ike_rsp_verify_sign_cmd_t));
 
-	ike_verify_req.hashidx = get_hash_idx_from_scheme(scheme);
-	if (ike_verify_req.hashidx < 0)
+	status = get_hash_idx_from_scheme(scheme, &ike_verify_req.hashidx);
+	if (status != SUCCESS)
 	{
 		DBG2(DBG_IKE, "%s: Could not get hash index for scheme %N",
 			__FUNCTION__, signature_scheme_names, scheme);
 		return FALSE;
 	}
-	DBG2(DBG_IKE, "%s: hashidx %d", __FUNCTION__, ike_verify_req.hashidx);
+	DBG2(DBG_IKE, "%s: hashidx %u", __FUNCTION__, ike_verify_req.hashidx);
 
 	ike_verify_req.padding_info.padType = CE_RSA_PAD_PKCS1_V1_5_SIG;
 	ike_verify_req.padding_info.labelLen = 0;
@@ -387,7 +402,7 @@ fsm_public_key_t *fsm_public_key_load(key_type_t type, va_list args)
 		break;
 	}
 
-	if (!blob.ptr)
+	if (!blob.ptr || !blob.len)
 	{
 		return NULL;
 	}
@@ -416,11 +431,28 @@ fsm_public_key_t *fsm_public_key_load(key_type_t type, va_list args)
 		.key_len = 0,
 		);
 
+	if (!this)
+	{
+		goto errexit;
+	}
+
+	if (!this->asn_blob.ptr)
+	{
+		goto errexit;
+	}
+
 	/* Parse the public key to determine n, e and key_len values */
 	if (!parse_rsa_public_key(this))
 	{
-		return NULL;
+		goto errexit;
 	}
 
-	return &this->public;
+	return (fsm_public_key_t *)this;
+
+errexit:
+	if (this)
+	{
+		this->public.key.destroy(&this->public.key);
+	}
+	return NULL;
 }

@@ -322,6 +322,7 @@ int main(int argc, char *argv[])
 	{
 		levels[group] = LEVEL_CTRL;
 	}
+	group = 0;
 
 	/* handle arguments */
 	for (;;)
@@ -370,7 +371,10 @@ int main(int argc, char *argv[])
 				continue;
 			case 0:
 				/* option is in group */
-				levels[group] = atoi(optarg);
+				if (group >= 0 && group < DBG_MAX)
+				{
+					levels[group] = atoi(optarg);
+				}
 				continue;
 			default:
 				usage("");

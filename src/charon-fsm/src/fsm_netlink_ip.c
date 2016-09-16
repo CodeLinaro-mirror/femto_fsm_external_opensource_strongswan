@@ -463,6 +463,16 @@ fsm_netlink_ip_t *fsm_netlink_ip_create(u_int32_t family)
 		.family = family,
 		);
 
+	if (!this)
+	{
+		return NULL;
+	}
+
+	if (!this->mutex || !this->err_sem)
+	{
+		goto exitout;
+	}
+
 	if (family == AF_INET)
 	{
 		this->nl_sock = fsm_netlink_sock_create(NSS_NLIPV4_FAMILY, ip_resp,
@@ -486,9 +496,12 @@ fsm_netlink_ip_t *fsm_netlink_ip_create(u_int32_t family)
 		goto exitout;
 	}
 
-	return &this->public;
+	return (fsm_netlink_ip_t *)this;
 
 exitout:
-	destroy(this);
+	if (this)
+	{
+		this->public.destroy(&this->public);
+	}
 	return NULL;
 }

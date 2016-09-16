@@ -577,6 +577,11 @@ fsm_netlink_crypto_t *fsm_netlink_crypto_create(void)
 		.err_sem = semaphore_create(0),
 		);
 
+	if (!this || !this->mutex || !this->sem || !this->err_sem)
+	{
+		goto exitout;
+	}
+
 	this->nl_sock = fsm_netlink_sock_create(NSS_NLCRYPTO_FAMILY,
 		crypto_resp, crypto_ack, crypto_err, (void *)this);
 
@@ -592,9 +597,12 @@ fsm_netlink_crypto_t *fsm_netlink_crypto_create(void)
 		goto exitout;
 	}
 
-	return &this->public;
+	return (fsm_netlink_crypto_t *)this;
 
 exitout:
-	destroy(this);
+	if (this)
+	{
+		this->public.destroy(&this->public);
+	}
 	return NULL;
 }

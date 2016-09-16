@@ -19,6 +19,7 @@
  * for more details.
  */
 
+#include <stdlib.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <stdint.h>
@@ -572,13 +573,8 @@ static void schedule_expiration(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec", __FUNCTION__);
 
-	if (!this || !sa)
+	if (!this)
 	{
-		return;
-	}
-
-	if (!sa->lifetime.time.life)
-	{   /* no expiration at all */
 		return;
 	}
 
@@ -586,6 +582,12 @@ static void schedule_expiration(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 	{
 		DBG2(DBG_KNL, "%s: Could not schedule rekey/expire timer, sa NULL",
 			__FUNCTION__);
+		return;
+	}
+
+	if (!sa->lifetime.time.life)
+	{
+		/* no expiration at all */
 		return;
 	}
 
@@ -658,7 +660,12 @@ static status_t delete_route(iproute_t *route, mutex_t *mutex,
 	addr = route->subnet->get_address(route->subnet);
 	if (!addr.ptr || !addr.len)
 	{
-		return FAILED;
+		DBG2(DBG_KNL,
+		"%s: Failed to remove route for dst_net %H prefix %u gw %H ifname %s "
+		"src_ip %H", __FUNCTION__, route->subnet, route->prefixlen, route->gw,
+		route->ifname, route->src_ip);
+		status = FAILED;
+		goto exitout;
 	}
 
 	status = hydra->kernel_interface->del_route(hydra->kernel_interface, addr,
@@ -669,8 +676,10 @@ static status_t delete_route(iproute_t *route, mutex_t *mutex,
 		"%s: Failed to remove route for dst_net %H prefix %u gw %H ifname %s "
 		"src_ip %H", __FUNCTION__, route->subnet, route->prefixlen, route->gw,
 		route->ifname, route->src_ip);
+		goto exitout;
 	}
 
+exitout:
 	DESTROY_IF(route->subnet);
 	DESTROY_IF(route->gw);
 	DESTROY_IF(route->src_ip);
@@ -1339,6 +1348,9 @@ exitfunc:
 	{
 		if (route)
 		{
+			DESTROY_IF(route->src_ip);
+			DESTROY_IF(route->gw);
+			DESTROY_IF(route->subnet);
 			free(route);
 			route = NULL;
 		}
@@ -1680,7 +1692,14 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 		.mark = mark,
 		);
 
-	if (!sa || !sa->mutex || !sa->src || !sa->dst)
+	if (!sa)
+	{
+		DBG1(DBG_KNL, "%s: Failed to allocate mem for SPI 0x%08x %s",
+			__FUNCTION__, spi, IPSEC_DIR_STR(inbound));
+		return FAILED;
+	}
+
+	if (!sa->mutex || !sa->src || !sa->dst)
 	{
 		DBG1(DBG_KNL, "%s: Failed to allocate mem for SPI 0x%08x %s",
 			__FUNCTION__, spi, IPSEC_DIR_STR(inbound));
@@ -1688,8 +1707,9 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 		goto errorexit;
 	}
 
-	if ((replay_window < MIN_REPLAY_WINDOW) ||
-		(replay_window > MAX_REPLAY_WINDOW))
+
+	if ((replay_window < (u_int32_t)MIN_REPLAY_WINDOW) ||
+		(replay_window > (u_int32_t)MAX_REPLAY_WINDOW))
 	{
 		DBG1(DBG_KNL,
 			"%s: Invalid replay window value %u. Must be %u-%u.",
@@ -1794,10 +1814,13 @@ delsa:
 	return FAILED;
 
 errorexit:
-	DESTROY_IF(sa->src);
-	DESTROY_IF(sa->dst);
-	sa->mutex->unlock(sa->mutex);
-	free(sa);
+	if (sa)
+	{
+		DESTROY_IF(sa->src);
+		DESTROY_IF(sa->dst);
+		DESTROY_IF(sa->mutex);
+		free(sa);
+	}
 	return FAILED;
 }
 
@@ -2245,6 +2268,12 @@ METHOD(fsm_kernel_ipsec_t, create_tunnel, status_t,
 		.flow = NULL,
 		);
 
+	if (!tunnel)
+	{
+		DBG2(DBG_KNL, "%s: Could not allocate tunnel object", __FUNCTION__);
+		return FAILED;
+	}
+
 	if (!tunnel->mutex)
 	{
 		DBG2(DBG_KNL, "%s: Could not create tunnel mutex", __FUNCTION__);
@@ -2262,7 +2291,7 @@ METHOD(fsm_kernel_ipsec_t, create_tunnel, status_t,
 	if (status != SUCCESS)
 	{
 		DBG1(DBG_KNL, "%s: Could not create tunnel", __FUNCTION__);
-		tunnel->mutex->unlock(tunnel->mutex);
+		DESTROY_IF(tunnel->mutex);
 		free(tunnel);
 		return status;
 	}
@@ -2531,15 +2560,30 @@ fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
 		.routes_mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
 		.shunts = linked_list_create(),
 		.shunts_mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
-		.rng = lib->crypto->create_rng(lib->crypto, RNG_WEAK),
 		.install_virtual_ip = lib->settings->get_bool(lib->settings,
 			"%s.install_virtual_ip", TRUE, lib->ns),
 		);
+
+	if (!this)
+	{
+		DBG1(DBG_KNL, "%s: Failed to allocate memory!", __FUNCTION__);
+		goto exitcleanup;
+	}
+
+	if (!this->tunnels || !this->tunnels_mutex || !this->sas ||
+		!this->sas_mutex || !this->routes || !this->routes_mutex ||
+		!this->shunts || !this->shunts_mutex)
+	{
+		DBG1(DBG_KNL,
+			"%s: Failed to allocate memory for components!", __FUNCTION__);
+		goto exitcleanup;
+	}
 
 	/* Create FSM netlink crypto interface */
 	this->nl_crypto = fsm_netlink_crypto_create();
 	if (!this->nl_crypto)
 	{
+		DBG1(DBG_KNL, "%s: Failed to allocate nl_crypto!", __FUNCTION__);
 		goto exitcleanup;
 	}
 
@@ -2547,6 +2591,7 @@ fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
 	this->nl_ipsec = fsm_netlink_ipsec_create();
 	if (!this->nl_ipsec)
 	{
+		DBG1(DBG_KNL, "%s: Failed to allocate nl_ipsec!", __FUNCTION__);
 		goto exitcleanup;
 	}
 
@@ -2554,6 +2599,7 @@ fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
 	this->nl_ipv4 = fsm_netlink_ip_create(AF_INET);
 	if (!this->nl_ipv4)
 	{
+		DBG1(DBG_KNL, "%s: Could not allocate nl_ipv4!", __FUNCTION__);
 		goto exitcleanup;
 	}
 
@@ -2561,6 +2607,7 @@ fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
 	this->nl_ipv6 = fsm_netlink_ip_create(AF_INET6);
 	if (!this->nl_ipv6)
 	{
+		DBG1(DBG_KNL, "%s: Failed to allocate nl_ipv6!", __FUNCTION__);
 		goto exitcleanup;
 	}
 
@@ -2568,13 +2615,17 @@ fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
 	this->listener = fsm_listener_create(&this->public);
 	if (!this->listener)
 	{
+		DBG1(DBG_KNL, "%s: Failed to allocate fsm_listener!", __FUNCTION__);
 		goto exitcleanup;
 	}
 	charon->bus->add_listener(charon->bus, &this->listener->listener);
 
-	return &this->public;
+	return (fsm_kernel_ipsec_t *)this;
 
 exitcleanup:
-	destroy(this);
+	if (this)
+	{
+		this->public.interface.destroy(&this->public.interface);
+	}
 	return NULL;
 }

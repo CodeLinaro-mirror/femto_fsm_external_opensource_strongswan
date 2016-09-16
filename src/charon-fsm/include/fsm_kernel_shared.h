@@ -26,11 +26,11 @@
  * 1024 byte is currently sufficient for all operations. Some platform
  * require an enforced aligment to four bytes (e.g. ARM).
  */
-typedef union
+typedef struct netlink_buf_t netlink_buf_t;
+struct netlink_buf_t
 {
-	struct nlmsghdr hdr;
 	u_char bytes[1024];
-} netlink_buf_t __attribute__((aligned(RTA_ALIGNTO)));
+}__attribute__((aligned(RTA_ALIGNTO)));
 
 typedef struct netlink_socket_t netlink_socket_t;
 

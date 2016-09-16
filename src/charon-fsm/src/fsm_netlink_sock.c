@@ -363,6 +363,13 @@ fsm_netlink_sock_create(char *family_name, fsm_netlink_sock_resp_cb_t resp_cb,
 		.family_name = strdup(family_name),
 		);
 
+	if (!this)
+	{
+		DBG1(DBG_KNL, "%s: Failed to allocate fsm_netlink_sock object",
+			__FUNCTION__);
+		return NULL;
+	}
+
 	if (this->family_name == NULL)
 	{
 		DBG2(DBG_KNL, "%s: strdup of family_name failed", __FUNCTION__);
@@ -431,10 +438,13 @@ fsm_netlink_sock_create(char *family_name, fsm_netlink_sock_resp_cb_t resp_cb,
 		goto destroythis;
 	}
 
-	return &this->public;
+	return (fsm_netlink_sock_t *)this;
 
 destroythis:
-	destroy(this);
+	if (this)
+	{
+		this->public.destroy(&this->public);
+	}
 
 	return NULL;
 }
