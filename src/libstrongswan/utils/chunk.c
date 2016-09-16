@@ -1,4 +1,5 @@
 /*
+ * Copyright (c) 2016, The Linux Foundation. All rights reserved.
  * Copyright (C) 2008-2013 Tobias Brunner
  * Copyright (C) 2005-2006 Martin Willi
  * Copyright (C) 2005 Jan Hutter
@@ -41,7 +42,7 @@ chunk_t chunk_create_clone(u_char *ptr, chunk_t chunk)
 {
 	chunk_t clone = chunk_empty;
 
-	if (chunk.ptr && chunk.len > 0)
+	if (ptr && chunk.ptr && chunk.len > 0)
 	{
 		clone.ptr = ptr;
 		clone.len = chunk.len;
@@ -88,6 +89,11 @@ chunk_t chunk_create_cat(u_char *ptr, const char* mode, ...)
 {
 	va_list chunks;
 	chunk_t construct = chunk_create(ptr, 0);
+
+	if (!ptr || !mode)
+	{
+		return chunk_empty;
+	}
 
 	va_start(chunks, mode);
 	while (TRUE)
@@ -173,7 +179,10 @@ void chunk_split(chunk_t chunk, const char *mode, ...)
 				if (ch->len)
 				{
 					ch->ptr = malloc(ch->len);
-					memcpy(ch->ptr, chunk.ptr, ch->len);
+					if (ch->ptr)
+					{
+						memcpy(ch->ptr, chunk.ptr, ch->len);
+					}
 				}
 				else
 				{
@@ -352,6 +361,11 @@ chunk_t *chunk_map(char *path, bool wr)
 		.wr = wr,
 	);
 
+	if (!chunk)
+	{
+		return NULL;
+	}
+
 	if (chunk->fd == -1)
 	{
 		free(chunk);
@@ -466,6 +480,10 @@ chunk_t chunk_to_hex(chunk_t chunk, char *buf, bool uppercase)
 	if (!buf)
 	{
 		buf = malloc(len + 1);
+		if (!buf)
+		{
+			return chunk_empty;
+		}
 	}
 	buf[len] = '\0';
 
@@ -527,6 +545,10 @@ chunk_t chunk_from_hex(chunk_t hex, char *buf)
 	if (!buf)
 	{
 		buf = malloc(len);
+		if (!buf)
+		{
+			return chunk_empty;
+		}
 	}
 
 	/* buffer is filled from the right */
@@ -565,6 +587,10 @@ chunk_t chunk_to_base64(chunk_t chunk, char *buf)
 	if (!buf)
 	{
 		buf = malloc(len * 4 / 3 + 1);
+		if (!buf)
+		{
+			return chunk_empty;
+		}
 	}
 	pos = buf;
 	for (i = 0; i < len; i+=3)
@@ -629,6 +655,10 @@ chunk_t chunk_from_base64(chunk_t base64, char *buf)
 	if (!buf)
 	{
 		buf = malloc(len);
+		if (!buf)
+		{
+			return chunk_empty;
+		}
 	}
 	pos = base64.ptr;
 	outlen = 0;
@@ -665,6 +695,10 @@ chunk_t chunk_to_base32(chunk_t chunk, char *buf)
 	if (!buf)
 	{
 		buf = malloc(len * 8 / 5 + 1);
+		if (!buf)
+		{
+			return chunk_empty;
+		}
 	}
 	pos = buf;
 	for (i = 0; i < len; i+=5)

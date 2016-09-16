@@ -1,4 +1,5 @@
 /*
+ * Copyright (c) 2016, The Linux Foundation. All rights reserved.
  * Copyright (C) 2008-2014 Tobias Brunner
  * Copyright (C) 2008 Martin Willi
  * Hochschule fuer Technik Rapperswil
@@ -40,8 +41,14 @@
 /**
  * Object allocation/initialization macro, using designated initializer.
  */
-#define INIT(this, ...) { (this) = malloc(sizeof(*(this))); \
-						   *(this) = (typeof(*(this))){ __VA_ARGS__ }; }
+#define INIT(this, ...) \
+	do { \
+		(this) = malloc(sizeof(*(this))); \
+		if ((this) != NULL) \
+		{ \
+			*(this) = (typeof(*(this))){ __VA_ARGS__ }; \
+		} \
+	} while(0)
 
 /**
  * Aligning version of INIT().
@@ -52,9 +59,14 @@
  * @param align		alignment for allocation, in bytes
  * @param ...		initializer
  */
-#define INIT_ALIGN(this, align, ...) { \
-						(this) = malloc_align(sizeof(*(this)), align); \
-						*(this) = (typeof(*(this))){ __VA_ARGS__ }; }
+#define INIT_ALIGN(this, align, ...) \
+	do { \
+		(this) = malloc_align(sizeof(*(this)), align); \
+		if ((this) != NULL) \
+		{ \
+			*(this) = (typeof(*(this))){ __VA_ARGS__ }; \
+		} \
+	} while(0)
 
 /**
  * Object allocation/initialization macro, with extra allocated bytes at tail.
@@ -65,11 +77,16 @@
  * @param extra		number of bytes to allocate at end of this
  * @param ...		initializer
  */
-#define INIT_EXTRA(this, extra, ...) { \
-						typeof(extra) _extra = (extra); \
-						(this) = malloc(sizeof(*(this)) + _extra); \
-						*(this) = (typeof(*(this))){ __VA_ARGS__ }; \
-						memset((this) + 1, 0, _extra); }
+#define INIT_EXTRA(this, extra, ...) \
+	do { \
+		typeof(extra) _extra = (extra); \
+		(this) = malloc(sizeof(*(this)) + _extra); \
+		if ((this) != NULL) \
+		{ \
+			*(this) = (typeof(*(this))){ __VA_ARGS__ }; \
+			memset((this) + 1, 0, _extra); \
+		} \
+	} while(0)
 
 /**
  * Aligning version of INIT_EXTRA().
@@ -81,11 +98,16 @@
  * @param align		alignment for allocation, in bytes
  * @param ...		initializer
  */
-#define INIT_EXTRA_ALIGN(this, extra, align, ...) { \
-						typeof(extra) _extra = (extra); \
-						(this) = malloc_align(sizeof(*(this)) + _extra, align); \
-						*(this) = (typeof(*(this))){ __VA_ARGS__ }; \
-						memset((this) + 1, 0, _extra); }
+#define INIT_EXTRA_ALIGN(this, extra, align, ...) \
+	do { \
+		typeof(extra) _extra = (extra); \
+		(this) = malloc_align(sizeof(*(this)) + _extra, align); \
+		if ((this) != NULL) \
+		{ \
+			*(this) = (typeof(*(this))){ __VA_ARGS__ }; \
+			memset((this) + 1, 0, _extra); \
+		} \
+	} while(0)
 
 /**
  * Method declaration/definition macro, providing private and public interface.
