@@ -1208,6 +1208,16 @@ fsm_netlink_ipsec_t *fsm_netlink_ipsec_create(void)
 		.err_sem = semaphore_create(0),
 		);
 
+	if (!this)
+	{
+		return NULL;
+	}
+
+	if (!this->mutex || !this->stats_mutex || !this->sem || !this->err_sem)
+	{
+		goto exitout;
+	}
+
 	memset(this->ifname, 0, IFNAMSIZ);
 
 	this->nl_sock = fsm_netlink_sock_create(NSS_NLIPSEC_FAMILY, ipsec_resp,
@@ -1247,10 +1257,13 @@ fsm_netlink_ipsec_t *fsm_netlink_ipsec_create(void)
 		goto exitout;
 	}
 
-	return &this->public;
+	return (fsm_netlink_ipsec_t *)this;
 
 exitout:
-	destroy(this);
+	if (this)
+	{
+		this->public.destroy(&this->public);
+	}
 
 	return NULL;
 }

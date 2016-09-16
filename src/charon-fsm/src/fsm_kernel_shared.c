@@ -219,6 +219,12 @@ static bool queue(private_netlink_socket_t *this, struct nlmsghdr *buf)
 	if (entry)
 	{
 		hdr = malloc(buf->nlmsg_len);
+		if (!hdr)
+		{
+			DBG2(DBG_KNL, "%s: Failed to allocate hdr", __FUNCTION__);
+			this->mutex->unlock(this->mutex);
+			return FALSE;
+		}
 		memcpy(hdr, buf, buf->nlmsg_len);
 		array_insert(entry->hdrs, ARRAY_TAIL, hdr);
 		if (hdr->nlmsg_type == NLMSG_DONE || !(hdr->nlmsg_flags & NLM_F_MULTI))
@@ -305,6 +311,24 @@ static status_t send_once(private_netlink_socket_t *this, struct nlmsghdr *in,
 		.condvar = condvar_create(CONDVAR_TYPE_DEFAULT),
 		.hdrs = array_create(0, 0),
 		);
+	if (!entry)
+	{
+		DBG2(DBG_KNL, "%s: Failed to allocate entry!", __FUNCTION__);
+		return FAILED;
+	}
+
+	if (!entry->condvar || !entry->hdrs)
+	{
+		DBG2(DBG_KNL, "%s: Failed to allocate entry objects", __FUNCTION__);
+		DESTROY_IF(entry->condvar);
+		if (entry->hdrs)
+		{
+			array_destroy_function(entry->hdrs, (void *)free, NULL);
+		}
+		free(entry);
+		return FAILED;
+	}
+
 	this->entries->put(this->entries, (void *)seq, entry);
 
 	while (!entry->complete)
@@ -348,13 +372,17 @@ static status_t send_once(private_netlink_socket_t *this, struct nlmsghdr *in,
 
 	while (array_remove(entry->hdrs, ARRAY_HEAD, &hdr))
 	{
-		if (this->names)
+		if (hdr && hdr->nlmsg_len)
 		{
-			DBG3(DBG_KNL, "received %N %u: %b", this->names, hdr->nlmsg_type,
-				hdr->nlmsg_seq, hdr, hdr->nlmsg_len);
+			if (this->names)
+			{
+				DBG3(DBG_KNL, "received %N %u: %b", this->names,
+					hdr->nlmsg_type, hdr->nlmsg_seq, hdr, hdr->nlmsg_len);
+			}
+
+			result = chunk_cat("mm", result,
+				chunk_create((u_char *)hdr, hdr->nlmsg_len));
 		}
-		result = chunk_cat("mm", result,
-			chunk_create((u_char *)hdr, hdr->nlmsg_len));
 	}
 	destroy_entry(entry);
 
@@ -419,9 +447,9 @@ METHOD(netlink_socket_t, netlink_send, status_t, private_netlink_socket_t *this,
 
 	for (try = 0; try <= this->retries; ++try)
 	{
-		struct nlmsghdr *hdr;
-		status_t status;
-		size_t len;
+		struct nlmsghdr *hdr = NULL;
+		status_t status = FAILED;
+		size_t len = 0;
 
 		if (try > 0)
 		{
@@ -438,11 +466,17 @@ METHOD(netlink_socket_t, netlink_send, status_t, private_netlink_socket_t *this,
 			default:
 				return status;
 		}
+
+		if (!hdr)
+		{
+			continue;
+		}
+
 		if (hdr->nlmsg_type == NLMSG_ERROR)
 		{
-			struct nlmsgerr *err;
+			struct nlmsgerr *err = NULL;
 
-			err = NLMSG_DATA(hdr);
+			err = (struct nlmsgerr *)NLMSG_DATA(hdr);
 			if (err->error == -EBUSY)
 			{
 				free(hdr);
@@ -466,21 +500,22 @@ METHOD(netlink_socket_t, netlink_send, status_t, private_netlink_socket_t *this,
 METHOD(netlink_socket_t, netlink_send_ack, status_t,
 	private_netlink_socket_t *this, struct nlmsghdr *in)
 {
-	struct nlmsghdr *out, *hdr;
-	size_t len;
+	struct nlmsghdr *out = NULL;
+	struct nlmsghdr *hdr = NULL;
+	size_t len = 0;
 
 	if (netlink_send(this, in, &out, &len) != SUCCESS)
 	{
 		return FAILED;
 	}
 	hdr = out;
-	while (NLMSG_OK(hdr, len))
+	while (hdr && NLMSG_OK(hdr, len))
 	{
 		switch (hdr->nlmsg_type)
 		{
 			case NLMSG_ERROR:
 			{
-				struct nlmsgerr *err = NLMSG_DATA(hdr);
+				struct nlmsgerr *err = (struct nlmsgerr *)NLMSG_DATA(hdr);
 
 				if (err->error)
 				{
@@ -519,7 +554,12 @@ METHOD(netlink_socket_t, netlink_send_ack, status_t,
 
 METHOD(netlink_socket_t, destroy, void, private_netlink_socket_t *this)
 {
-	if (this->socket != -1)
+	if (!this)
+	{
+		return;
+	}
+
+	if (this->socket >= 0)
 	{
 		if (this->parallel)
 		{
@@ -569,6 +609,18 @@ netlink_socket_t *netlink_socket_create(int protocol, enum_name_t *names,
 		.parallel = parallel,
 		);
 
+	if (!this)
+	{
+		DBG1(DBG_KNL, "cannot create netlink socket");
+		goto exitout;
+	}
+
+	if (!this->mutex || !this->entries)
+	{
+		DBG1(DBG_KNL, "cannot create netlink socket");
+		goto exitout;
+	}
+
 	if (!this->buflen)
 	{
 		long pagesize = sysconf(_SC_PAGESIZE);
@@ -579,17 +631,15 @@ netlink_socket_t *netlink_socket_create(int protocol, enum_name_t *names,
 		/* base this on NLMSG_GOODSIZE */
 		this->buflen = min(pagesize, 8192);
 	}
-	if (this->socket == -1)
+	if (this->socket < 0)
 	{
 		DBG1(DBG_KNL, "unable to create netlink socket");
-		destroy(this);
-		return NULL;
+		goto exitout;
 	}
 	if (bind(this->socket, (struct sockaddr *)&addr, sizeof(addr)))
 	{
 		DBG1(DBG_KNL, "unable to bind netlink socket");
-		destroy(this);
-		return NULL;
+		goto exitout;
 	}
 	if (this->parallel)
 	{
@@ -597,7 +647,14 @@ netlink_socket_t *netlink_socket_create(int protocol, enum_name_t *names,
 			this);
 	}
 
-	return &this->public;
+	return (netlink_socket_t *)this;
+
+exitout:
+	if (this)
+	{
+		this->public.destroy(&this->public);
+	}
+	return NULL;
 }
 
 /**
@@ -606,7 +663,13 @@ netlink_socket_t *netlink_socket_create(int protocol, enum_name_t *names,
 void netlink_add_attribute(struct nlmsghdr *hdr, int rta_type, chunk_t data,
 	size_t buflen)
 {
-	struct rtattr *rta;
+	struct rtattr *rta = NULL;
+
+	if (!data.ptr || !data.len)
+	{
+		DBG1(DBG_KNL, "invalid data, unable to add attribute");
+		return;
+	}
 
 	if (NLMSG_ALIGN(hdr->nlmsg_len) + RTA_LENGTH(data.len) > buflen)
 	{

@@ -572,29 +572,33 @@ static job_requeue_t reinstall_routes(private_fsm_kernel_net_t *this)
 	enumerator = this->routes->create_enumerator(this->routes);
 	while (enumerator->enumerate(enumerator, NULL, (void **)&route))
 	{
-		net_change_t *change, lookup = {
-			.if_name = route->if_name,
-		};
-		/* check if a change for the outgoing interface is queued */
-		change = this->net_changes->get(this->net_changes, &lookup);
-		if (!change)
+		if (route && route->if_name && strlen(route->if_name))
 		{
-			/* in case src_ip is not on the outgoing interface */
-			if (this->public.interface.get_interface(&this->public.interface,
-				route->src_ip, &lookup.if_name))
+			net_change_t *change, lookup = {
+				.if_name = route->if_name,
+			};
+			/* check if a change for the outgoing interface is queued */
+			change = this->net_changes->get(this->net_changes, &lookup);
+			if (!change)
 			{
-				if (!streq(lookup.if_name, route->if_name))
+				/* in case src_ip is not on the outgoing interface */
+				if (this->public.interface.get_interface(
+					&this->public.interface, route->src_ip, &lookup.if_name))
 				{
-					change = this->net_changes->get(this->net_changes, &lookup);
+					if (!streq(lookup.if_name, route->if_name))
+					{
+						change =
+							this->net_changes->get(this->net_changes, &lookup);
+					}
+					free(lookup.if_name);
 				}
-				free(lookup.if_name);
 			}
-		}
-		if (change)
-		{
-			manage_srcroute(this, RTM_NEWROUTE, NLM_F_CREATE | NLM_F_EXCL,
-				route->dst_net, route->prefixlen, route->gateway,
-				route->src_ip, route->if_name);
+			if (change)
+			{
+				manage_srcroute(this, RTM_NEWROUTE, NLM_F_CREATE | NLM_F_EXCL,
+					route->dst_net, route->prefixlen, route->gateway,
+					route->src_ip, route->if_name);
+			}
 		}
 	}
 	enumerator->destroy(enumerator);
@@ -620,9 +624,19 @@ static void queue_route_reinstall(private_fsm_kernel_net_t *this,
 	timeval_t now;
 	job_t *job;
 
+	if (!this || !if_name || !strlen(if_name))
+	{
+		return;
+	}
+
 	INIT(update,
 		.if_name = if_name,
 		);
+
+	if (!update)
+	{
+		return;
+	}
 
 	this->net_changes_lock->lock(this->net_changes_lock);
 	found = this->net_changes->put(this->net_changes, update, update);
@@ -727,40 +741,49 @@ static u_char get_scope(host_t *ip)
 {
 	chunk_t addr;
 
-	addr = ip->get_address(ip);
-	switch (addr.len)
+	if (!ip)
 	{
-		case 4:
-			/* we use the mapping defined in RFC 6724, 3.2 */
-			if (addr.ptr[0] == 127)
-			{
-				/* link-local, same as the IPv6 loopback address */
-				return 2;
-			}
-			if (addr.ptr[0] == 169 && addr.ptr[1] == 254)
-			{
-				/* link-local */
-				return 2;
-			}
-			break;
-		case 16:
-			if (IN6_IS_ADDR_LOOPBACK((struct in6_addr *)addr.ptr))
-			{
-				/* link-local, according to RFC 4291, 2.5.3 */
-				return 2;
-			}
-			if (IN6_IS_ADDR_LINKLOCAL((struct in6_addr *)addr.ptr))
-			{
-				return 2;
-			}
-			if (IN6_IS_ADDR_SITELOCAL((struct in6_addr *)addr.ptr))
-			{
-				/* deprecated, according to RFC 4291, 2.5.7 */
-				return 5;
-			}
-			break;
-		default:
-			break;
+		return 14;
+	}
+
+	addr = ip->get_address(ip);
+
+	if (addr.ptr && addr.len)
+	{
+		switch (addr.len)
+		{
+			case 4:
+				/* we use the mapping defined in RFC 6724, 3.2 */
+				if (addr.ptr[0] == 127)
+				{
+					/* link-local, same as the IPv6 loopback address */
+					return 2;
+				}
+				if (addr.ptr[0] == 169 && addr.ptr[1] == 254)
+				{
+					/* link-local */
+					return 2;
+				}
+				break;
+			case 16:
+				if (IN6_IS_ADDR_LOOPBACK((struct in6_addr *)addr.ptr))
+				{
+					/* link-local, according to RFC 4291, 2.5.3 */
+					return 2;
+				}
+				if (IN6_IS_ADDR_LINKLOCAL((struct in6_addr *)addr.ptr))
+				{
+					return 2;
+				}
+				if (IN6_IS_ADDR_SITELOCAL((struct in6_addr *)addr.ptr))
+				{
+					/* deprecated, according to RFC 4291, 2.5.7 */
+					return 5;
+				}
+				break;
+			default:
+				break;
+		}
 	}
 	/* global */
 	return 14;
@@ -1038,6 +1061,19 @@ static void process_link(private_fsm_kernel_net_t *this, struct nlmsghdr *hdr,
 					.usable = hydra->kernel_interface->is_interface_usable(
 						hydra->kernel_interface, name),
 					);
+				if (!entry)
+				{
+					DBG2(DBG_KNL, "%s: Could not allocate entry!",
+						__FUNCTION__);
+					return;
+				}
+				if (!entry->addrs)
+				{
+					free(entry);
+					DBG2(DBG_KNL, "%s: Could not allocate entry!",
+						__FUNCTION__);
+					return;
+				}
 				this->ifaces->insert_last(this->ifaces, entry);
 			}
 			strncpy(entry->ifname, name, IFNAMSIZ);
@@ -1217,6 +1253,17 @@ static void process_addr(private_fsm_kernel_net_t *this,
 					.flags = msg->ifa_flags,
 					.scope = msg->ifa_scope,
 					);
+				if (!addr)
+				{
+					DBG2(DBG_KNL, "%s: Could not allocate addr!", __FUNCTION__);
+					return;
+				}
+				if (!addr->ip)
+				{
+					DBG2(DBG_KNL, "%s: Could not allocate addr!", __FUNCTION__);
+					free(addr);
+					return;
+				}
 				iface->addrs->insert_last(iface->addrs, addr);
 				addr_map_entry_add(this->addrs, addr, iface);
 				if (event && iface->usable)
@@ -1342,6 +1389,8 @@ static bool receive_events(private_fsm_kernel_net_t *this, int fd,
 	struct sockaddr_nl addr;
 	socklen_t addr_len = sizeof(addr);
 	int len;
+
+	memset(&addr, 0, sizeof(addr));
 
 	len = recvfrom(this->socket_events, response, sizeof(response),
 		MSG_DONTWAIT, (struct sockaddr *)&addr, &addr_len);
@@ -1573,7 +1622,7 @@ static int get_interface_index(private_fsm_kernel_net_t *this, char *name)
 	}
 	this->lock->unlock(this->lock);
 
-	if (ifindex == 0)
+	if (ifindex <= 0)
 	{
 		DBG1(DBG_KNL, "%s: unable to get interface index for %s", __FUNCTION__,
 			name);
@@ -1698,6 +1747,12 @@ static rt_entry_t *parse_route(struct nlmsghdr *hdr, rt_entry_t *route)
 			.dst_len = msg->rtm_dst_len,
 			.table = msg->rtm_table,
 			);
+
+		if (!route)
+		{
+			DBG2(DBG_KNL, "%s: Could not allocate route!", __FUNCTION__);
+			return NULL;
+		}
 	}
 
 	while (RTA_OK(rta, rtasize))
@@ -1769,7 +1824,7 @@ static host_t *get_route(private_fsm_kernel_net_t *this, host_t *dest,
 	memset(&request, 0, sizeof(request));
 
 	family = dest->get_family(dest);
-	hdr = &request.hdr;
+	hdr = (struct nlmsghdr *)&request.bytes[0];
 	hdr->nlmsg_flags = NLM_F_REQUEST;
 	hdr->nlmsg_type = RTM_GETROUTE;
 	hdr->nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
@@ -1830,6 +1885,10 @@ static host_t *get_route(private_fsm_kernel_net_t *this, host_t *dest,
 					continue;
 				}
 				route = parse_route(current, route);
+				if (!route)
+				{
+					continue;
+				}
 
 				table = (uintptr_t)route->table;
 				if (this->rt_exclude->find_first(this->rt_exclude, NULL,
@@ -2048,7 +2107,7 @@ static status_t manage_ipaddr(private_fsm_kernel_net_t *this, int nlmsg_type,
 
 	chunk = ip->get_address(ip);
 
-	hdr = &request.hdr;
+	hdr = (struct nlmsghdr *)&request.bytes[0];
 	hdr->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK | flags;
 	hdr->nlmsg_type = nlmsg_type;
 	hdr->nlmsg_len = NLMSG_LENGTH(sizeof(struct ifaddrmsg));
@@ -2082,7 +2141,7 @@ static status_t init_address_list(private_fsm_kernel_net_t *this)
 
 	memset(&request, 0, sizeof(request));
 
-	in = &request.hdr;
+	in = (struct nlmsghdr *)&request.bytes[0];
 	in->nlmsg_len = NLMSG_LENGTH(sizeof(struct rtgenmsg));
 	in->nlmsg_flags = NLM_F_REQUEST | NLM_F_MATCH | NLM_F_ROOT;
 	msg = NLMSG_DATA(in);
@@ -2254,6 +2313,20 @@ METHOD(kernel_net_t, add_ip, status_t, private_fsm_kernel_net_t *this,
 			.refcount = 1,
 			.scope = RT_SCOPE_UNIVERSE,
 			);
+
+		if (!addr)
+		{
+			DBG2(DBG_KNL, "%s: Could not allocate addr!", __FUNCTION__);
+			return FAILED;
+		}
+
+		if (!addr->ip)
+		{
+			DBG2(DBG_KNL, "%s: Could not allocate ip!", __FUNCTION__);
+			free(addr);
+			return FAILED;
+		}
+
 		iface->addrs->insert_last(iface->addrs, addr);
 		addr_map_entry_add(this->vips, addr, iface);
 		ifi = iface->ifindex;
@@ -2393,6 +2466,10 @@ static status_t manage_srcroute(private_fsm_kernel_net_t *this, int nlmsg_type,
 		status_t status;
 
 		half_net = chunk_alloca(dst_net.len);
+		if (!half_net.ptr || !half_net.len)
+		{
+			return FAILED;
+		}
 		memset(half_net.ptr, 0, half_net.len);
 		half_prefixlen = 1;
 
@@ -2406,18 +2483,18 @@ static status_t manage_srcroute(private_fsm_kernel_net_t *this, int nlmsg_type,
 
 	memset(&request, 0, sizeof(request));
 
-	hdr = &request.hdr;
-	hdr->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK | flags;
-	hdr->nlmsg_type = nlmsg_type;
-	hdr->nlmsg_len = NLMSG_LENGTH(sizeof(struct rtmsg));
+	hdr = (struct nlmsghdr *)&request.bytes[0];
+	hdr->nlmsg_flags = (__u16)(NLM_F_REQUEST | NLM_F_ACK | flags);
+	hdr->nlmsg_type = (__u16)nlmsg_type;
+	hdr->nlmsg_len = (__u32)NLMSG_LENGTH(sizeof(struct rtmsg));
 
-	msg = NLMSG_DATA(hdr);
-	msg->rtm_family = src_ip->get_family(src_ip);
-	msg->rtm_dst_len = prefixlen;
-	msg->rtm_table = this->routing_table;
-	msg->rtm_protocol = RTPROT_STATIC;
-	msg->rtm_type = RTN_UNICAST;
-	msg->rtm_scope = RT_SCOPE_UNIVERSE;
+	msg = (struct rtmsg *)NLMSG_DATA(hdr);
+	msg->rtm_family = (unsigned char)src_ip->get_family(src_ip);
+	msg->rtm_dst_len = (unsigned char)prefixlen;
+	msg->rtm_table = (unsigned char)this->routing_table;
+	msg->rtm_protocol = (unsigned char)RTPROT_STATIC;
+	msg->rtm_type = (unsigned char)RTN_UNICAST;
+	msg->rtm_scope = (unsigned char)RT_SCOPE_UNIVERSE;
 
 	netlink_add_attribute(hdr, RTA_DST, dst_net, sizeof(request));
 	if (!src_ip->is_anyaddr(src_ip))
@@ -2433,6 +2510,10 @@ static status_t manage_srcroute(private_fsm_kernel_net_t *this, int nlmsg_type,
 		netlink_add_attribute(hdr, RTA_GATEWAY, chunk, sizeof(request));
 	}
 	ifindex = get_interface_index(this, if_name);
+	if (ifindex <= 0)
+	{
+		return FAILED;
+	}
 	chunk.ptr = (u_char *)&ifindex;
 	chunk.len = sizeof(ifindex);
 	netlink_add_attribute(hdr, RTA_OIF, chunk, sizeof(request));
@@ -2541,7 +2622,7 @@ static status_t manage_rule(private_fsm_kernel_net_t *this, int nlmsg_type,
 	char *fwmark;
 
 	memset(&request, 0, sizeof(request));
-	hdr = &request.hdr;
+	hdr = (struct nlmsghdr *)&request.bytes[0];
 	hdr->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
 	hdr->nlmsg_type = nlmsg_type;
 	if (nlmsg_type == RTM_NEWRULE)
@@ -2700,7 +2781,7 @@ METHOD(fsm_kernel_net_t, activate_iface, status_t,
 	netlink_buf_t request;
 	struct nlmsghdr *out = NULL;
 	struct nlmsghdr *current = NULL;
-	struct nlmsghdr *in = &request.hdr;
+	struct nlmsghdr *in = NULL;
 	struct ifinfomsg *info = NULL;
 	struct rtgenmsg *rtmsg = NULL;
 	size_t len = 0;
@@ -2720,13 +2801,22 @@ METHOD(fsm_kernel_net_t, activate_iface, status_t,
 	}
 	memset(&request, 0, sizeof(request));
 
-	in->nlmsg_len = NLMSG_LENGTH(sizeof(struct rtgenmsg));
-	in->nlmsg_flags = NLM_F_REQUEST | NLM_F_MATCH | NLM_F_ROOT;
-	rtmsg = NLMSG_DATA(in);
-	rtmsg->rtgen_family = AF_UNSPEC;
+	in = (struct nlmsghdr *)&request.bytes[0];
+	in->nlmsg_len = (__u32)NLMSG_LENGTH(sizeof(struct rtgenmsg));
+	in->nlmsg_flags = (__u16)(NLM_F_REQUEST | NLM_F_MATCH | NLM_F_ROOT);
+	rtmsg = (struct rtgenmsg *)NLMSG_DATA(in);
+
+	if (((uint8_t *)in + sizeof(request)) <=
+		((uint8_t *)rtmsg + sizeof(struct rtgenmsg)))
+	{
+		DBG2(DBG_KNL, "%s: Message too large!", __FUNCTION__);
+		return FAILED;
+	}
+
+	rtmsg->rtgen_family = (unsigned char)AF_UNSPEC;
 
 	/* get all links */
-	in->nlmsg_type = RTM_GETLINK;
+	in->nlmsg_type = (__u16)RTM_GETLINK;
 	if (this->socket->send(this->socket, in, &out, &len) != SUCCESS)
 	{
 		DBG2(DBG_KNL, "%s: Error sending RTM_GETLINK request", __FUNCTION__);
@@ -2741,7 +2831,7 @@ METHOD(fsm_kernel_net_t, activate_iface, status_t,
 
 	current = out;
 	/* Loop through all messages that came back */
-	while (NLMSG_OK(current, len))
+	while (current && NLMSG_OK(current, len))
 	{
 		switch (current->nlmsg_type)
 		{
@@ -2750,17 +2840,17 @@ METHOD(fsm_kernel_net_t, activate_iface, status_t,
 
 			case RTM_NEWLINK:
 			{
-				struct ifinfomsg *msg = NLMSG_DATA(current);
-				struct rtattr *rta = IFLA_RTA(msg);
-				size_t rtasize = IFLA_PAYLOAD(current);
+				struct ifinfomsg *msg = (struct ifinfomsg *)NLMSG_DATA(current);
+				struct rtattr *rta = (struct rtattr *)IFLA_RTA(msg);
+				size_t rtasize = (size_t)IFLA_PAYLOAD(current);
 				char *name = NULL;
 
-				while (RTA_OK(rta, rtasize))
+				while (rta && RTA_OK(rta, rtasize))
 				{
 					switch (rta->rta_type)
 					{
 						case IFLA_IFNAME:
-							name = RTA_DATA(rta);
+							name = (char *)RTA_DATA(rta);
 							if (name)
 							{
 								DBG2(DBG_KNL, "%s: Interface %s(%d) found",
@@ -2768,10 +2858,11 @@ METHOD(fsm_kernel_net_t, activate_iface, status_t,
 							}
 							break;
 					}
-					rta = RTA_NEXT(rta, rtasize);
+					rta = (struct rtattr *)RTA_NEXT(rta, rtasize);
 				}
 
-				if (name && !strncmp(name, ifname, strlen(name)))
+				if (name && (strlen(name) <= IFNAMSIZ) &&
+					!strncmp(name, ifname, strlen(name)))
 				{
 					if (msg->ifi_flags & IFF_UP)
 					{
@@ -2782,12 +2873,21 @@ METHOD(fsm_kernel_net_t, activate_iface, status_t,
 
 					/* We found the one we care about */
 					memset(&request, 0, sizeof(request));
+					in = (struct nlmsghdr *)&request.bytes[0];
+					in->nlmsg_len =
+						(__u32)NLMSG_LENGTH(sizeof(struct ifinfomsg));
+					in->nlmsg_flags = (__u16)(NLM_F_REQUEST | NLM_F_ACK);
+					in->nlmsg_type = (__u16)RTM_SETLINK;
+					info = (struct ifinfomsg *)NLMSG_DATA(in);
+					if (((uint8_t *)in + sizeof(request)) <=
+						((uint8_t *)info + sizeof(struct ifinfomsg)))
+					{
+						DBG2(DBG_KNL, "%s: Message too large!", __FUNCTION__);
+						status = FAILED;
+						break;
+					}
 
-					in->nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
-					in->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
-					in->nlmsg_type = RTM_SETLINK;
-					info = NLMSG_DATA(in);
-					memcpy(info, msg, sizeof(struct ifinfomsg));
+					memcpy((void *)info, (void *)msg, sizeof(struct ifinfomsg));
 					info->ifi_flags |= IFF_UP;
 					status = this->socket->send_ack(this->socket, in);
 					if (status != SUCCESS)
@@ -2893,6 +2993,24 @@ fsm_kernel_net_t *fsm_kernel_net_create(void)
 		.mss = lib->settings->get_int(lib->settings,
 			"%s.plugins.kernel-netlink.mss", 0, lib->ns),
 		);
+
+	if (!kernel_net)
+	{
+		DBG1(DBG_KNL, "%s: Failed to allocate kernel_net!", __FUNCTION__);
+		return NULL;
+	}
+
+	if (!kernel_net->socket || !kernel_net->rt_exclude || !kernel_net->routes ||
+		!kernel_net->net_changes || !kernel_net->addrs || !kernel_net->vips ||
+		!kernel_net->routes_lock || !kernel_net->net_changes_lock ||
+		!kernel_net->ifaces || !kernel_net->condvar || !kernel_net->roam_lock)
+	{
+		DBG1(DBG_KNL, "%s: Failed to allocate kernel_net objects!",
+			__FUNCTION__);
+		destroy(kernel_net);
+		return NULL;
+	}
+
 	timerclear(&kernel_net->last_route_reinstall);
 	timerclear(&kernel_net->next_roam);
 

@@ -103,16 +103,19 @@ METHOD(attribute_handler_t, handle, bool,
 	if (!attr)
 	{
 		INIT(attr,
-			.id = ike_sa->get_unique_id(ike_sa),
 			.dns = linked_list_create(),
 		);
 
 		if (!attr || !attr->dns)
 		{
-			this->lock->write_lock(this->lock);
+			if (attr)
+			{
+				free(attr);
+			}
+			this->lock->unlock(this->lock);
 			return FALSE;
 		}
-
+		attr->id = ike_sa->get_unique_id(ike_sa);
 		this->attrs->insert_last(this->attrs, attr);
 	}
 	attr->dns->insert_last(attr->dns, host);
