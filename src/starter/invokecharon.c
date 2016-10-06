@@ -1,4 +1,5 @@
 /* strongSwan charon launcher
+ * Copyright (c) 2016, The Linux Foundation. All rights reserved.
  * Copyright (C) 2001-2002 Mathieu Lafon - Arkoon Network Security
  * Copyright (C) 2006 Martin Willi - Hochschule fuer Technik Rapperswil
  *
@@ -75,17 +76,17 @@ int starter_stop_charon (void)
 		_stop_requested = 1;
 
 		/* be more and more aggressive */
-		for (i = 0; i < 50 && (pid = _charon_pid) != 0; i++)
+		for (i = 0; i < 100 && (pid = _charon_pid) != 0; i++)
 		{
 			if (i == 0)
 			{
 				kill(pid, SIGINT);
 			}
-			else if (i < 40)
+			else if (i < 80)
 			{
 				kill(pid, SIGTERM);
 			}
-			else if (i == 40)
+			else if (i == 80)
 			{
 				kill(pid, SIGKILL);
 				DBG1(DBG_APP, "starter_stop_charon(): %s does not respond, sending KILL",
