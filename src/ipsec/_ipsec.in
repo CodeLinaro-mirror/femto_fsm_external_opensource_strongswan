@@ -1,5 +1,6 @@
 #! @IPSEC_SHELL@
 # prefix command to run stuff from our programs directory
+# Copyright (c) 2016, The Linux Foundation. All rights reserved.
 # Copyright (C) 1998-2002  Henry Spencer.
 # Copyright (C) 2006-2014 Andreas Steffen
 # Copyright (C) 2006 Martin Willi
@@ -259,7 +260,7 @@ stop)
 			loop=110
 			while [ $loop -gt 0 ] ; do
 				kill -0 $spid 2>/dev/null || break
-				sleep 0.1
+				usleep 100000
 				loop=$(($loop - 1))
 			done
 			if [ $loop -eq 0 ]
