@@ -13,7 +13,7 @@ fsm_tests_SOURCES = \
 fsm_tests.o : $(top_builddir)/config.status
 
 fsm_tests_CFLAGS = \
-	-Wall -Werror -MD -MP \
+	-Wall -Wextra -Werror -MD -MP \
 	-I$(top_srcdir)/src/libstrongswan \
 	-I$(top_srcdir)/src/libhydra \
 	-I$(top_srcdir)/src/libcharon \

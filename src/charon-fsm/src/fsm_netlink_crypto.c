@@ -311,6 +311,10 @@ CALLBACK(crypto_err, void, private_fsm_netlink_crypto_t *this, void *msg)
  */
 CALLBACK(crypto_ack, void, private_fsm_netlink_crypto_t *this, void *msg)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+	(void)msg;
+
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_crypto", __FUNCTION__);
 }
 
@@ -364,7 +368,7 @@ CALLBACK(crypto_resp, void, private_fsm_netlink_crypto_t *this,
 METHOD(fsm_netlink_crypto_t, del_session, status_t,
 	private_fsm_netlink_crypto_t *this, u_int32_t sess_idx)
 {
-	struct nss_nlcrypto_rule rule = { { 0 } };
+	struct nss_nlcrypto_rule rule;
 	status_t status = SUCCESS;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_crypto idx %u", __FUNCTION__,
@@ -374,6 +378,8 @@ METHOD(fsm_netlink_crypto_t, del_session, status_t,
 	{
 		return INVALID_ARG;
 	}
+
+	memset(&rule, 0, sizeof(rule));
 
 	/* Copy the session info to the rule */
 	rule.msg.destroy.session_idx = sess_idx;
@@ -396,7 +402,7 @@ METHOD(fsm_netlink_crypto_t, add_session, status_t,
 	u_int16_t int_alg, chunk_t int_key, u_int32_t family, bool nat, bool decap,
 	u_int32_t *sess_idx_ptr)
 {
-	struct nss_nlcrypto_rule rule = { { 0 } };
+	struct nss_nlcrypto_rule rule;
 	struct nss_nlcrypto_create_session *crypto_create = &rule.msg.create;
 	struct nss_nlcrypto_update_session *crypto_update = &rule.msg.update;
 	status_t status = SUCCESS;
@@ -419,6 +425,7 @@ METHOD(fsm_netlink_crypto_t, add_session, status_t,
 		return NOT_SUPPORTED;
 	}
 
+	memset(&rule, 0, sizeof(rule));
 	/* Validate the encryption algorithm */
 	found = crypto_alg_lookup(ENCRYPTION_ALGORITHM, enc_alg, &cipher_alg);
 	if (!found || !cipher_alg)

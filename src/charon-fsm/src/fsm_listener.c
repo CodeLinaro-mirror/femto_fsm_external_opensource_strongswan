@@ -64,7 +64,7 @@ struct private_fsm_listener_t
  */
 static bool push_env(char *envp[], u_int count, char *fmt, ...)
 {
-	int i = 0;
+	uint32_t i = 0;
 	char *str;
 	va_list args;
 
@@ -139,6 +139,9 @@ static void push_vip_env(private_fsm_listener_t *this, ike_sa_t *ike_sa,
 	host_t *host;
 	int v4 = 0, v6 = 0;
 	bool first = TRUE;
+
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
 
 	enumerator = ike_sa->create_virtual_ip_enumerator(ike_sa, local);
 	while (enumerator->enumerate(enumerator, &host))
@@ -390,6 +393,10 @@ METHOD(listener_t, authorize, bool, private_fsm_listener_t *this,
 	ike_sa_t *ike_sa, bool final, bool *success)
 {
 	bool result = TRUE;
+
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+	(void)ike_sa;
 
 	DBG2(DBG_IKE, "Entering %s in fsm_listener", __FUNCTION__);
 

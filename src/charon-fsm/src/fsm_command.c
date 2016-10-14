@@ -141,7 +141,7 @@ int command_getopt(char **arg)
  */
 void command_register(command_t command)
 {
-	int i;
+	uint32_t i;
 
 	if (registered == MAX_COMMANDS)
 	{
@@ -251,13 +251,21 @@ int command_dispatch(int c, char *v[])
 {
 	int op;
 	int i;
+	command_t helpcmd;
 
 	options = options_create();
 	atexit(cleanup);
 	active = help_idx = registered;
 	argc = c;
 	argv = v;
-	command_register((command_t){help, 'h', "help", "Show usage information"});
+
+	memset(&helpcmd, 0, sizeof(helpcmd));
+	helpcmd.call = help;
+	helpcmd.op = 'h';
+	helpcmd.cmd = "help";
+	helpcmd.description = "Show usage information";
+
+	command_register(helpcmd);
 
 	build_opts();
 	op = getopt_long(c, v, command_optstring, command_opts, NULL);

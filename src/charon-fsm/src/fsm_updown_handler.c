@@ -181,12 +181,20 @@ METHOD(attribute_handler_t, release, void,
 	this->lock->unlock(this->lock);
 }
 
-METHOD(fsm_updown_handler_t, create_dns_enumerator, enumerator_t*,
+METHOD(fsm_updown_handler_t, create_dns_enumerator, enumerator_t *,
 	private_fsm_updown_handler_t *this, u_int id)
 {
 	attributes_t *attr;
 	enumerator_t *enumerator;
 	ike_sa_t *ike_sa;
+
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)id;
+
+	if (!this)
+	{
+		return enumerator_create_empty();
+	}
 
 	ike_sa = charon->bus->get_sa(charon->bus);
 	if (!ike_sa)

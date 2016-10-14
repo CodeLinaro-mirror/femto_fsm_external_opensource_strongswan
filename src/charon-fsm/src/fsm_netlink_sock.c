@@ -148,6 +148,10 @@ static int sock_resp_cb(struct nl_msg *msg, void *arg)
 
 static int sock_noop_cb(struct nl_msg *msg, void *arg)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)msg;
+	(void)arg;
+
 	return NL_OK;
 }
 

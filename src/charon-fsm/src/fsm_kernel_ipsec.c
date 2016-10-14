@@ -480,6 +480,9 @@ static bool match_tunnel_by_id(tunnel_t *tunnel, u_int32_t *ike_sa_id)
 METHOD(kernel_ipsec_t, get_features, kernel_feature_t,
 	private_fsm_kernel_ipsec_t *this)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec", __FUNCTION__);
 
 	return 0;
@@ -492,6 +495,11 @@ METHOD(kernel_ipsec_t, get_spi, status_t,
 	bool result = FALSE;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec", __FUNCTION__);
+
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)src;
+	(void)dst;
+	(void)protocol;
 
 	if (!this || !spi)
 	{
@@ -517,6 +525,12 @@ METHOD(kernel_ipsec_t, get_cpi, status_t,
 	private_fsm_kernel_ipsec_t *this, host_t *src, host_t *dst,
 	u_int16_t *cpi)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+	(void)src;
+	(void)dst;
+	(void)cpi;
+
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec", __FUNCTION__);
 
 	return NOT_SUPPORTED;
@@ -840,6 +854,10 @@ METHOD(kernel_ipsec_t, del_sa, status_t,
 	status_t status = FAILED;
 	sa_t *sa = NULL;
 
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)cpi;
+	(void)mark;
+
 	if (!this || !src || !dst)
 	{
 		return INVALID_ARG;
@@ -1082,13 +1100,15 @@ static status_t add_ip_flow_rule(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 		goto errorexit;
 	}
 
-	INIT(flow);
+	flow = malloc(sizeof(flow_t));
 
 	if (!flow)
 	{
 		DBG2(DBG_KNL, "%s: Could not allocate flow object", __FUNCTION__);
 		goto errorexit;
 	}
+
+	memset(flow, 0, sizeof(flow_t));
 
 	if (sa->family == AF_INET)
 	{
@@ -1618,6 +1638,14 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 	host_t *rip = (inbound) ? src : dst;
 	refcount_t ref = 0;
 
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)tfc;
+	(void)ipcomp;
+	(void)cpi;
+	(void)initiator;
+	(void)esn;
+	(void)update;
+
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec mode %N protocol %u "
 		"spi 0x%08x %s mark value 0x%08x mask 0x%08x NAT %s",
 		__FUNCTION__, ipsec_mode_names, mode, protocol, spi,
@@ -1829,6 +1857,19 @@ METHOD(kernel_ipsec_t, update_sa, status_t,
 	u_int16_t cpi, host_t *src, host_t *dst, host_t *new_src, host_t *new_dst,
 	bool old_encap, bool new_encap, mark_t mark)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+	(void)spi;
+	(void)protocol;
+	(void)cpi;
+	(void)src;
+	(void)dst;
+	(void)new_src;
+	(void)new_dst;
+	(void)old_encap;
+	(void)new_encap;
+	(void)mark;
+
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec proto %u", __FUNCTION__,
 		protocol);
 
@@ -1862,6 +1903,10 @@ METHOD(kernel_ipsec_t, query_sa, status_t,
 	u_int64_t *bytes, u_int64_t *packets, time_t *time)
 {
 	status_t status = FAILED;
+
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)protocol;
+	(void)mark;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec", __FUNCTION__);
 
@@ -2052,6 +2097,14 @@ METHOD(kernel_ipsec_t, query_policy, status_t,
 	traffic_selector_t *dst_ts, policy_dir_t direction, mark_t mark,
 	time_t *use_time)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+	(void)src_ts;
+	(void)dst_ts;
+	(void)direction;
+	(void)mark;
+	(void)use_time;
+
 	return NOT_SUPPORTED;
 }
 
@@ -2067,6 +2120,10 @@ METHOD(kernel_ipsec_t, del_policy, status_t,
 	u_int8_t mask = 0;
 	iproute_t *route = NULL;
 	u_int32_t spi = 0;
+
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)mark;
+	(void)priority;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec dir %R===%R %N",
 		__FUNCTION__, src_ts, dst_ts, policy_dir_names, direction);
@@ -2139,6 +2196,9 @@ exitfunc:
 METHOD(kernel_ipsec_t, flush_policies, status_t,
 	private_fsm_kernel_ipsec_t *this)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec", __FUNCTION__);
 	return SUCCESS;
 }
@@ -2147,6 +2207,11 @@ METHOD(kernel_ipsec_t, flush_policies, status_t,
 METHOD(kernel_ipsec_t, bypass_socket, bool,
 	private_fsm_kernel_ipsec_t *this, int fd, int family)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+	(void)fd;
+	(void)family;
+
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec", __FUNCTION__);
 
 	return TRUE;
@@ -2156,6 +2221,12 @@ METHOD(kernel_ipsec_t, enable_udp_decap, bool,
 	private_fsm_kernel_ipsec_t *this, int fd, int family, u_int16_t port)
 {
 	int type = UDP_ENCAP_ESPINUDP;
+
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+	(void)family;
+	(void)port;
+
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec", __FUNCTION__);
 
 	if (setsockopt(fd, IPPROTO_UDP, UDP_ENCAP, &type, sizeof(type)) < 0)
