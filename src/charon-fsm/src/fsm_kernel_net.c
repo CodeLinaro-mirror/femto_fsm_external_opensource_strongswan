@@ -442,12 +442,12 @@ struct private_fsm_kernel_net_t
 	/**
 	 * routing table to install routes
 	 */
-	int routing_table;
+	u_int32_t routing_table;
 
 	/**
 	 * priority of used routing table
 	 */
-	int routing_table_prio;
+	u_int32_t routing_table_prio;
 
 	/**
 	 * installed routes
@@ -1388,7 +1388,11 @@ static bool receive_events(private_fsm_kernel_net_t *this, int fd,
 	struct nlmsghdr *hdr = (struct nlmsghdr *)response;
 	struct sockaddr_nl addr;
 	socklen_t addr_len = sizeof(addr);
-	int len;
+	ssize_t len;
+
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)fd;
+	(void)event;
 
 	memset(&addr, 0, sizeof(addr));
 
@@ -1418,7 +1422,7 @@ static bool receive_events(private_fsm_kernel_net_t *this, int fd,
 		return TRUE;
 	}
 
-	while (NLMSG_OK(hdr, len))
+	while (NLMSG_OK(hdr, (size_t)len))
 	{
 		/* looks good so far, dispatch netlink message */
 		switch (hdr->nlmsg_type)
@@ -1634,7 +1638,8 @@ static int get_interface_index(private_fsm_kernel_net_t *this, char *name)
  * check if an address or net (addr with prefix net bits) is in
  * subnet (net with net_len net bits)
  */
-static bool addr_in_subnet(chunk_t addr, int prefix, chunk_t net, int net_len)
+static bool addr_in_subnet(chunk_t addr, uint32_t prefix, chunk_t net,
+	u_int8_t net_len)
 {
 	static const u_char mask[] =
 		{ 0x00, 0x80, 0xc0, 0xe0, 0xf0, 0xf8, 0xfc, 0xfe };
@@ -1646,7 +1651,7 @@ static bool addr_in_subnet(chunk_t addr, int prefix, chunk_t net, int net_len)
 		return TRUE;
 	}
 
-	if (addr.len != net.len || net_len > 8 * net.len || prefix < net_len)
+	if (addr.len != net.len || net_len > (8 * net.len) || prefix < net_len)
 	{
 		return FALSE;
 	}
@@ -1818,8 +1823,8 @@ static host_t *get_route(private_fsm_kernel_net_t *this, host_t *dest,
 	}
 	chunk = dest->get_address(dest);
 	len = chunk.len * 8;
-	prefix = prefix < 0 ? len : min(prefix, len);
-	match_net = prefix != len;
+	prefix = (prefix < 0) ? (int)len : (int)min((size_t)prefix, len);
+	match_net = (size_t)prefix != len;
 
 	memset(&request, 0, sizeof(request));
 
@@ -1908,7 +1913,8 @@ static host_t *get_route(private_fsm_kernel_net_t *this, host_t *dest,
 					/* interface is down */
 					continue;
 				}
-				if (!addr_in_subnet(chunk, prefix, route->dst, route->dst_len))
+				if (!addr_in_subnet(chunk, (uint32_t)prefix, route->dst,
+					route->dst_len))
 				{
 					/* route destination does not contain dest */
 					continue;
@@ -2115,7 +2121,7 @@ static status_t manage_ipaddr(private_fsm_kernel_net_t *this, int nlmsg_type,
 	msg = NLMSG_DATA(hdr);
 	msg->ifa_family = ip->get_family(ip);
 	msg->ifa_flags = 0;
-	msg->ifa_prefixlen = prefix < 0 ? chunk.len * 8 : prefix;
+	msg->ifa_prefixlen = (prefix < 0) ? (__u8)(chunk.len * 8) : (__u8)prefix;
 	msg->ifa_scope = RT_SCOPE_UNIVERSE;
 	msg->ifa_index = if_index;
 

@@ -138,7 +138,7 @@ static bool write_msg(private_netlink_socket_t *this, struct nlmsghdr *msg)
 	struct sockaddr_nl addr = {
 		.nl_family = AF_NETLINK,
 	};
-	int len;
+	ssize_t len;
 
 	if (msg_loss_hook(msg))
 	{
@@ -149,7 +149,7 @@ static bool write_msg(private_netlink_socket_t *this, struct nlmsghdr *msg)
 	{
 		len = sendto(this->socket, msg, msg->nlmsg_len, 0,
 			(struct sockaddr *)&addr, sizeof(addr));
-		if (len != msg->nlmsg_len)
+		if (len != (ssize_t)msg->nlmsg_len)
 		{
 			if (errno == EINTR)
 			{
@@ -165,16 +165,17 @@ static bool write_msg(private_netlink_socket_t *this, struct nlmsghdr *msg)
 /**
  * Read a single Netlink message from socket, return 0 on error, -1 on timeout
  */
-static ssize_t read_msg(private_netlink_socket_t *this,
-	char *buf, size_t buflen, bool block)
+static ssize_t read_msg(private_netlink_socket_t *this, char *buf,
+	size_t buflen, bool block)
 {
 	ssize_t len;
 
 	if (block)
 	{
 		fd_set set;
-		timeval_t tv = { };
+		timeval_t tv;
 
+		memset(&tv, 0, sizeof(tv));
 		FD_ZERO(&set);
 		FD_SET(this->socket, &set);
 		timeval_add_ms(&tv, this->timeout);
@@ -187,7 +188,7 @@ static ssize_t read_msg(private_netlink_socket_t *this,
 	}
 	len = recv(this->socket, buf, buflen,
 		(MSG_TRUNC | (block ? 0 : MSG_DONTWAIT)));
-	if (len > buflen)
+	if (len > (ssize_t)buflen)
 	{
 		DBG1(DBG_KNL, "netlink response exceeds buffer size");
 		return 0;
@@ -259,7 +260,7 @@ static bool read_and_queue(private_netlink_socket_t *this, bool block)
 	if (len)
 	{
 		hdr = (struct nlmsghdr *)buf;
-		while (NLMSG_OK(hdr, len))
+		while (NLMSG_OK(hdr, (size_t)len))
 		{
 			if (!queue(this, hdr))
 			{
@@ -274,6 +275,9 @@ static bool read_and_queue(private_netlink_socket_t *this, bool block)
 CALLBACK(watch, bool, private_netlink_socket_t *this, int fd,
 	watcher_event_t event)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)fd;
+
 	if (event == WATCHER_READ)
 	{
 		read_and_queue(this, FALSE);
@@ -288,7 +292,7 @@ static status_t send_once(private_netlink_socket_t *this, struct nlmsghdr *in,
 	uintptr_t seq, struct nlmsghdr **out, size_t *out_len)
 {
 	struct nlmsghdr *hdr;
-	chunk_t result = { };
+	chunk_t result = chunk_empty;
 	entry_t *entry;
 
 	in->nlmsg_seq = seq;
@@ -660,8 +664,8 @@ exitout:
 /**
  * Described in header.
  */
-void netlink_add_attribute(struct nlmsghdr *hdr, int rta_type, chunk_t data,
-	size_t buflen)
+void netlink_add_attribute(struct nlmsghdr *hdr, uint16_t rta_type,
+	chunk_t data, size_t buflen)
 {
 	struct rtattr *rta = NULL;
 
@@ -687,7 +691,8 @@ void netlink_add_attribute(struct nlmsghdr *hdr, int rta_type, chunk_t data,
 /**
  * Described in header.
  */
-void *netlink_reserve(struct nlmsghdr *hdr, int buflen, int type, int len)
+void *netlink_reserve(struct nlmsghdr *hdr, size_t buflen, uint16_t type,
+	size_t len)
 {
 	struct rtattr *rta;
 

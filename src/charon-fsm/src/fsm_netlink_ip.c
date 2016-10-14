@@ -194,6 +194,10 @@ CALLBACK(ip_resp, void, private_fsm_netlink_ip_t *this,
 
 CALLBACK(ip_ack, void, private_fsm_netlink_ip_t *this, void *msg)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+	(void)msg;
+
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ip", __FUNCTION__);
 }
 
@@ -225,9 +229,10 @@ static status_t add_v4_flow(private_fsm_netlink_ip_t *this,
 	u_int8_t proto, char src_ifname[IFNAMSIZ], char dst_ifname[IFNAMSIZ])
 {
 	status_t status = FAILED;
-	struct nss_nlipv4_rule v4_rule = { { 0 } };
+	struct nss_nlipv4_rule v4_rule;
 	struct nss_ipv4_5tuple *v4_tuple = &v4_rule.nim.msg.rule_create.tuple;
 
+	memset(&v4_rule, 0, sizeof(v4_rule));
 	memcpy(v4_rule.flow_ifname, src_ifname, IFNAMSIZ);
 	memcpy(v4_rule.return_ifname, dst_ifname, IFNAMSIZ);
 
@@ -259,7 +264,7 @@ static status_t add_v6_flow(private_fsm_netlink_ip_t *this,
 	u_int8_t proto, char src_ifname[IFNAMSIZ], char dst_ifname[IFNAMSIZ])
 {
 	status_t status = FAILED;
-	struct nss_nlipv6_rule v6_rule = { { 0 } };
+	struct nss_nlipv6_rule v6_rule;
 	struct nss_ipv6_5tuple *v6_tuple = &v6_rule.nim.msg.rule_create.tuple;
 
 	if (!src || !dst)
@@ -267,6 +272,7 @@ static status_t add_v6_flow(private_fsm_netlink_ip_t *this,
 		return INVALID_ARG;
 	}
 
+	memset(&v6_rule, 0, sizeof(v6_rule));
 	memcpy(v6_rule.flow_ifname, src_ifname, IFNAMSIZ);
 	memcpy(v6_rule.return_ifname, dst_ifname, IFNAMSIZ);
 
@@ -332,9 +338,10 @@ static status_t del_v4_flow(private_fsm_netlink_ip_t *this, u_int32_t src,
 	u_int32_t src_port, u_int32_t dst, u_int32_t dst_port, u_int8_t proto)
 {
 	status_t status = FAILED;
-	struct nss_nlipv4_rule v4_rule = { { 0 } };
+	struct nss_nlipv4_rule v4_rule;
 	struct nss_ipv4_5tuple *v4_tuple = &v4_rule.nim.msg.rule_destroy.tuple;
 
+	memset(&v4_rule, 0, sizeof(v4_rule));
 	v4_tuple->flow_ip = src;
 	v4_tuple->flow_ident = src_port;
 	v4_tuple->return_ip = dst;
@@ -360,9 +367,10 @@ static status_t del_v6_flow(private_fsm_netlink_ip_t *this, u_int32_t *src,
 	u_int32_t src_port, u_int32_t *dst, u_int32_t dst_port, u_int8_t proto)
 {
 	status_t status = FAILED;
-	struct nss_nlipv6_rule v6_rule = { { 0 } };
+	struct nss_nlipv6_rule v6_rule;
 	struct nss_ipv6_5tuple *v6_tuple = &v6_rule.nim.msg.rule_destroy.tuple;
 
+	memset(&v6_rule, 0, sizeof(v6_rule));
 	memcpy(v6_tuple->flow_ip, src, sizeof(v6_tuple->flow_ip));
 	memcpy(v6_tuple->return_ip, dst, sizeof(v6_tuple->return_ip));
 	v6_tuple->protocol = proto;

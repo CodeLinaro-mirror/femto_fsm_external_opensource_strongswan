@@ -133,6 +133,9 @@ struct stats_t
 
 static void ipsec_stats_destroy(void *val, const void *key)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)key;
+
 	if (val)
 	{
 		free(val);
@@ -368,6 +371,10 @@ CALLBACK(ipsec_err, void, private_fsm_netlink_ipsec_t *this, void *msg)
 
 CALLBACK(ipsec_ack, void, private_fsm_netlink_ipsec_t *this, void *msg)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+	(void)msg;
+
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 }
 
@@ -455,7 +462,7 @@ METHOD(fsm_netlink_ipsec_t, create_tunnel, status_t,
 	private_fsm_netlink_ipsec_t *this, char ifname[IFNAMSIZ])
 {
 	status_t status = SUCCESS;
-	struct nss_nlipsec_rule rule = { { 0 } };
+	struct nss_nlipsec_rule rule;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 
@@ -464,6 +471,7 @@ METHOD(fsm_netlink_ipsec_t, create_tunnel, status_t,
 		return INVALID_ARG;
 	}
 
+	memset(&rule, 0, sizeof(rule));
 	status = ipsec_send_msg(this, &rule, NSS_NLIPSEC_CMD_CREATE_TUNNEL);
 	if (status != SUCCESS)
 	{
@@ -492,7 +500,7 @@ METHOD(fsm_netlink_ipsec_t, destroy_tunnel, status_t,
 	private_fsm_netlink_ipsec_t *this, char ifname[IFNAMSIZ])
 {
 	status_t status = SUCCESS;
-	struct nss_nlipsec_rule rule = { { 0 } };
+	struct nss_nlipsec_rule rule;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 
@@ -501,6 +509,7 @@ METHOD(fsm_netlink_ipsec_t, destroy_tunnel, status_t,
 		return INVALID_ARG;
 	}
 
+	memset(&rule, 0, sizeof(rule));
 	memcpy(rule.ifname, ifname, IFNAMSIZ);
 
 	status = ipsec_send_msg(this, &rule, NSS_NLIPSEC_CMD_DESTROY_TUNNEL);
@@ -764,7 +773,7 @@ METHOD(fsm_netlink_ipsec_t, add_encap_flow, status_t,
 	bool seq_skip, bool trailer_skip, bool use_pattern, u_int32_t mark)
 {
 	status_t status = SUCCESS;
-	struct nss_nlipsec_rule rule = { { 0 } };
+	struct nss_nlipsec_rule rule;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 
@@ -773,6 +782,7 @@ METHOD(fsm_netlink_ipsec_t, add_encap_flow, status_t,
 		return INVALID_ARG;
 	}
 
+	memset(&rule, 0, sizeof(rule));
 	status = validate_and_populate_flow(&rule, ifname, inner_src, inner_dst,
 		inner_family, protocol_nh, outer_src, outer_dst, outer_family, spi,
 		ttl_hl);
@@ -805,7 +815,7 @@ METHOD(fsm_netlink_ipsec_t, del_encap_flow, status_t,
 	u_int32_t outer_family, u_int32_t spi, u_int32_t ttl_hl)
 {
 	status_t status = SUCCESS;
-	struct nss_nlipsec_rule rule = { { 0 } };
+	struct nss_nlipsec_rule rule;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 
@@ -813,6 +823,8 @@ METHOD(fsm_netlink_ipsec_t, del_encap_flow, status_t,
 	{
 		return INVALID_ARG;
 	}
+
+	memset(&rule, 0, sizeof(rule));
 
 	status = validate_and_populate_flow(&rule, ifname, inner_src, inner_dst,
 		inner_family, protocol_nh, outer_src, outer_dst, outer_family, spi,
@@ -882,7 +894,7 @@ METHOD(fsm_netlink_ipsec_t, add_encap_subnet, status_t,
 	bool seq_skip, bool trailer_skip, bool use_pattern, u_int32_t mark)
 {
 	status_t status = SUCCESS;
-	struct nss_nlipsec_rule rule = { { 0 } };
+	struct nss_nlipsec_rule rule;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 
@@ -890,6 +902,8 @@ METHOD(fsm_netlink_ipsec_t, add_encap_subnet, status_t,
 	{
 		return INVALID_ARG;
 	}
+
+	memset(&rule, 0, sizeof(rule));
 
 	status = validate_and_populate_subnet(&rule, ifname, subnet, mask,
 		subnet_family, protocol_nh, outer_src, outer_dst, outer_family, spi,
@@ -923,7 +937,7 @@ METHOD(fsm_netlink_ipsec_t, del_encap_subnet, status_t,
 	u_int32_t outer_family, u_int32_t spi, u_int32_t ttl_hl)
 {
 	status_t status = SUCCESS;
-	struct nss_nlipsec_rule rule = { { 0 } };
+	struct nss_nlipsec_rule rule;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 
@@ -932,6 +946,7 @@ METHOD(fsm_netlink_ipsec_t, del_encap_subnet, status_t,
 		return INVALID_ARG;
 	}
 
+	memset(&rule, 0, sizeof(rule));
 	status = validate_and_populate_subnet(&rule, ifname, subnet, mask,
 		subnet_family, protocol_nh, outer_src, outer_dst, outer_family, spi,
 		ttl_hl);
@@ -956,7 +971,7 @@ METHOD(fsm_netlink_ipsec_t, del_encap_sa, status_t,
 	u_int32_t spi, u_int32_t ttl_hl)
 {
 	status_t status = SUCCESS;
-	struct nss_nlipsec_rule rule = { { 0 } };
+	struct nss_nlipsec_rule rule;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 
@@ -972,6 +987,7 @@ METHOD(fsm_netlink_ipsec_t, del_encap_sa, status_t,
 		return NOT_SUPPORTED;
 	}
 
+	memset(&rule, 0, sizeof(rule));
 	memcpy(rule.ifname, ifname, IFNAMSIZ);
 
 	status = POPULATE_SA(outer_family, &rule, outer_src, outer_dst, spi,
@@ -1013,7 +1029,7 @@ METHOD(fsm_netlink_ipsec_t, add_decap_sa, status_t,
 	bool use_pattern)
 {
 	status_t status = SUCCESS;
-	struct nss_nlipsec_rule rule = { { 0 } };
+	struct nss_nlipsec_rule rule;
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 
 	if (!this || !outer_src || !outer_dst)
@@ -1028,6 +1044,7 @@ METHOD(fsm_netlink_ipsec_t, add_decap_sa, status_t,
 		return NOT_SUPPORTED;
 	}
 
+	memset(&rule, 0, sizeof(rule));
 	memcpy(rule.ifname, ifname, IFNAMSIZ);
 
 	status = POPULATE_SA(outer_family, &rule, outer_src, outer_dst, spi,
@@ -1063,7 +1080,7 @@ METHOD(fsm_netlink_ipsec_t, del_decap_sa, status_t,
 	u_int32_t spi, u_int32_t ttl_hl)
 {
 	status_t status = SUCCESS;
-	struct nss_nlipsec_rule rule = { { 0 } };
+	struct nss_nlipsec_rule rule;
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_ipsec", __FUNCTION__);
 
 	if (!this || !outer_src || !outer_dst)
@@ -1078,6 +1095,7 @@ METHOD(fsm_netlink_ipsec_t, del_decap_sa, status_t,
 		return NOT_SUPPORTED;
 	}
 
+	memset(&rule, 0, sizeof(rule));
 	memcpy(rule.ifname, ifname, IFNAMSIZ);
 
 	status = POPULATE_SA(outer_family, &rule, outer_src, outer_dst, spi,

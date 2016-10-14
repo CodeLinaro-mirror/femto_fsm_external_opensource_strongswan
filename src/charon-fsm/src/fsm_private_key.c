@@ -66,6 +66,15 @@ METHOD(private_key_t, sign, bool, private_fsm_private_key_t *this,
 
 	DBG2(DBG_IKE, "Entering %s in fsm_private_key", __FUNCTION__);
 
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+
+	if (!signature || !data.ptr)
+	{
+		DBG2(DBG_IKE, "%s: Invalid arguments!", __FUNCTION__);
+		return FALSE;
+	}
+
 	if (scheme != SIGN_RSA_EMSA_PKCS1_SHA256)
 	{
 		DBG2(DBG_IKE, "%s: scheme %N not supported!",
@@ -110,15 +119,23 @@ METHOD(private_key_t, sign, bool, private_fsm_private_key_t *this,
 }
 
 METHOD(private_key_t, decrypt, bool, private_fsm_private_key_t *this,
-	encryption_scheme_t scheme,
-	chunk_t crypto, chunk_t *plain)
+	encryption_scheme_t scheme, chunk_t crypto, chunk_t *plain)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+	(void)scheme;
+	(void)crypto;
+	(void)plain;
+
 	DBG2(DBG_IKE, "%s: Not supported for fsm_private_key", __FUNCTION__);
 	return FALSE;
 }
 
 METHOD(private_key_t, get_keysize, int, private_fsm_private_key_t *this)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+
 	DBG2(DBG_IKE, "%s: Not supported for fsm_private_key", __FUNCTION__);
 	return 0;
 }
@@ -126,6 +143,9 @@ METHOD(private_key_t, get_keysize, int, private_fsm_private_key_t *this)
 METHOD(private_key_t, get_public_key, public_key_t *,
 	private_fsm_private_key_t *this)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+
 	DBG2(DBG_IKE, "%s: Not supported for fsm_private_key", __FUNCTION__);
 	return NULL;
 }
@@ -133,6 +153,11 @@ METHOD(private_key_t, get_public_key, public_key_t *,
 METHOD(private_key_t, get_encoding, bool, private_fsm_private_key_t *this,
 	cred_encoding_type_t type, chunk_t *encoding)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+	(void)type;
+	(void)encoding;
+
 	DBG2(DBG_IKE, "%s: Not supported for fsm_private_key", __FUNCTION__);
 	return FALSE;
 }
@@ -140,6 +165,9 @@ METHOD(private_key_t, get_encoding, bool, private_fsm_private_key_t *this,
 METHOD(private_key_t, get_fingerprint, bool, private_fsm_private_key_t *this,
 	cred_encoding_type_t type, chunk_t *fp)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)type;
+
 	DBG2(DBG_IKE, "Entering %s in fsm_private_key", __FUNCTION__);
 	*fp = this->id->get_encoding(this->id);
 	return TRUE;

@@ -65,9 +65,11 @@ struct private_fsm_public_key_t
 	refcount_t ref;
 };
 
-METHOD(public_key_t, get_type, key_type_t,
-	private_fsm_public_key_t *this)
+METHOD(public_key_t, get_type, key_type_t, private_fsm_public_key_t *this)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+
 	DBG2(DBG_IKE, "Entering %s in fsm_public_key", __FUNCTION__);
 
 	return KEY_RSA;
@@ -88,7 +90,7 @@ static struct schemes_t schemes[] =
 
 static bool scheme_supported(signature_scheme_t scheme)
 {
-	int32_t index = 0;
+	uint32_t index = 0;
 	bool result = FALSE;
 
 	for (index = 0; index < NUM_SCHEMES; index++)
@@ -107,7 +109,7 @@ static status_t get_hash_idx_from_scheme(signature_scheme_t scheme,
 	ce_hash_idx_t *hash)
 {
 	ce_hash_idx_t result;
-	int32_t index = 0;
+	uint32_t index = 0;
 	bool found = FALSE;
 
 	if (!hash)
@@ -251,15 +253,24 @@ end:
 	return success;
 }
 
-METHOD(public_key_t, encrypt_, bool, private_fsm_public_key_t *this,
+METHOD(public_key_t, encrypt, bool, private_fsm_public_key_t *this,
 	encryption_scheme_t scheme, chunk_t plain, chunk_t *crypto)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+	(void)scheme;
+	(void)plain;
+	(void)crypto;
+
 	DBG2(DBG_IKE, "%s: Not supported in fsm_public_key", __FUNCTION__);
 	return FALSE;
 }
 
 METHOD(public_key_t, get_keysize, int, private_fsm_public_key_t *this)
 {
+	/* This is to avoid compiler warnings about unused parameters */
+	(void)this;
+
 	DBG2(DBG_IKE, "Entering %s in fsm_public_key", __FUNCTION__);
 	return this->key_len;
 }
@@ -414,7 +425,7 @@ fsm_public_key_t *fsm_public_key_load(key_type_t type, va_list args)
 			{
 				.get_type = _get_type,
 				.verify = _verify,
-				.encrypt = _encrypt_,
+				.encrypt = _encrypt,
 				.equals = public_key_equals,
 				.get_keysize = _get_keysize,
 				.get_fingerprint = _get_fingerprint,

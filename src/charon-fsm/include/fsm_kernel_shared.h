@@ -81,8 +81,8 @@ netlink_socket_t *netlink_socket_create(int protocol, enum_name_t *names,
  * @param data			data to add to the rtattr
  * @param buflen		length of the netlink message buffer
  */
-void netlink_add_attribute(struct nlmsghdr *hdr, int rta_type, chunk_t data,
-	size_t buflen);
+void netlink_add_attribute(struct nlmsghdr *hdr, uint16_t rta_type,
+	chunk_t data, size_t buflen);
 
 /**
  * Reserve space in a netlink message for given size and type, returning buffer.
@@ -93,6 +93,7 @@ void netlink_add_attribute(struct nlmsghdr *hdr, int rta_type, chunk_t data,
  * @param len			length of RTA data
  * @return				buffer to len bytes of attribute data, NULL on error
  */
-void *netlink_reserve(struct nlmsghdr *hdr, int buflen, int type, int len);
+void *netlink_reserve(struct nlmsghdr *hdr, size_t buflen, uint16_t type,
+	size_t len);
 
 #endif /* FSM_KERNEL_SHARED_H_ */

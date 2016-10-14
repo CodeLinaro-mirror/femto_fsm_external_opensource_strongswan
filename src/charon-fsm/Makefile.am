@@ -20,7 +20,7 @@ charon_fsm_SOURCES = \
 charon-fsm.o :	$(top_builddir)/config.status
 
 AM_CPPFLAGS = \
-	-g -Wall -Werror -MD -MP \
+	-g -Wall -Wextra -Werror -MD -MP \
 	-I$(SYSROOT)/usr/include/libnl3 \
 	-I$(top_srcdir)/src/libstrongswan \
 	-I$(top_srcdir)/src/libhydra \
