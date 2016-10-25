@@ -181,100 +181,19 @@ esac
 
 # utility functions for Full Stack integration
 upstack() {
-	dovirtip add
-
-	if test "$?" = "0"; then
-		if [ -n "${PLUTO_MY_SOURCEIP4_1+x}" ]; then
-			/opt/qcom/bin/tests/runBaseConfig ${PLUTO_MY_SOURCEIP4_1%/*} ${PLUTO_PEER} ${PLUTO_INTERFACE}
-		elif [ -n "${PLUTO_MY_SOURCEIP6_1+x}" ]; then
-			/opt/qcom/bin/tests/runBaseConfigforV6 ${PLUTO_MY_SOURCEIP6_1%/*} ${PLUTO_PEER} ${PLUTO_INTERFACE}
-		fi
-	fi
-
-	if [ $VPN_LOGGING ]; then
-		logger -t $TAG -p $FAC_PRIO -- \
-			"- Add IP ${PLUTO_MY_SOURCEIP%/*} ${PLUTO_INTERFACE} - Stack Up"
+	if [ -n "${PLUTO_MY_SOURCEIP4_1+x}" ]; then
+		/opt/qcom/bin/tests/runBaseConfig ${PLUTO_MY_SOURCEIP4_1%/*} ${PLUTO_PEER} ${PLUTO_INTERFACE} ${PLUTO_UNIQUEID}
+	elif [ -n "${PLUTO_MY_SOURCEIP6_1+x}" ]; then
+		/opt/qcom/bin/tests/runBaseConfigforV6 ${PLUTO_MY_SOURCEIP6_1%/*} ${PLUTO_PEER} ${PLUTO_INTERFACE} ${PLUTO_UNIQUEID}
 	fi
 }
 
 downstack() {
-	dovirtip del
-
-	if test "$?" = "0"
-	then
-		if [ -n "${PLUTO_MY_SOURCEIP4_1+x}" ]; then
-			/opt/qcom/bin/tests/runBaseConfig 0.0.0.0 ${PLUTO_PEER} ${PLUTO_INTERFACE}
-		elif [ -n "${PLUTO_MY_SOURCEIP6_1+x}" ]; then
-			/opt/qcom/bin/tests/runBaseConfigforV6 :: ${PLUTO_PEER} ${PLUTO_INTERFACE}
-
-		fi
+	if [ -n "${PLUTO_MY_SOURCEIP4_1+x}" ]; then
+		/opt/qcom/bin/tests/runBaseConfig 0.0.0.0 ${PLUTO_PEER} ${PLUTO_INTERFACE} ${PLUTO_UNIQUEID}
+	elif [ -n "${PLUTO_MY_SOURCEIP6_1+x}" ]; then
+		/opt/qcom/bin/tests/runBaseConfigforV6 :: ${PLUTO_PEER} ${PLUTO_INTERFACE} ${PLUTO_UNIQUEID}
 	fi
-
-	if [ $VPN_LOGGING ]
-	then
-		logger -t $TAG -p $FAC_PRIO -- \
-			"- Remove IP ${PLUTO_MY_SOURCEIP%/*} ${PLUTO_INTERFACE} - Stack Down"
-	fi
-}
-
-dovirtip() {
-	st=0
-	it=""
-
-	case "$1" in
-	"add")
-		# Check if IP is already assigned.
-		if [ -n ${PLUTO_MY_SOURCEIP} ] && \
-			ip -o route get ${PLUTO_MY_SOURCEIP} | grep -q ^local
-		then
-			# IP is already assigned, return success.
-			return 0
-		fi
-
-		# Determine if it's an IPv4 or IPv6 address.
-		if [ -n "${PLUTO_MY_SOURCEIP4_1+x}" ]; then
-			it="ip addr add ${PLUTO_MY_SOURCEIP4_1%/*}/32 dev ${PLUTO_INTERFACE}"
-		elif [ -n "${PLUTO_MY_SOURCEIP6_1+x}" ]; then
-			it="ip addr add ${PLUTO_MY_SOURCEIP6_1%/*}/128 dev ${PLUTO_INTERFACE}"
-		else
-			return 1
-		fi
-		;;
-	"del")
-		# Check if IP is assigned.
-		if [ -n ${PLUTO_MY_SOURCEIP} ] && \
-			! ip -o route get ${PLUTO_MY_SOURCEIP} | grep -q ^local
-		then
-			# IP is not assigned, return success.
-			return 0
-		fi
-
-		# Determine if it's an IPv4 or IPv6 address.
-		if [ -n "${PLUTO_MY_SOURCEIP4_1+x}" ]; then
-			it="ip addr del ${PLUTO_MY_SOURCEIP4_1%/*}/32 dev ${PLUTO_INTERFACE}"
-		elif [ -n "${PLUTO_MY_SOURCEIP6_1+x}" ]; then
-			it="ip addr del ${PLUTO_MY_SOURCEIP6_1%/*}/128 dev ${PLUTO_INTERFACE}"
-		else
-			return 1
-		fi
-		;;
-	*)
-		return 1
-		;;
-	esac
-
-	# Run the command populated above and note errors.
-	oops="`eval $it 2>&1`"
-	st=$?
-	if test " $oops" = " " -a " $st" != " 0"; then
-		oops="silent error, exit status $st"
-	fi
-
-	if test " $oops" != " " -o " $st" != " 0"; then
-		echo "$0: \`$it' failed ($oops)" >&2
-	fi
-
-	return $st
 }
 
 # utility functions for route manipulation
