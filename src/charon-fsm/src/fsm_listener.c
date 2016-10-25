@@ -36,6 +36,7 @@
 #include "fsm_updown_handler.h"
 
 typedef struct private_fsm_listener_t private_fsm_listener_t;
+typedef struct cache_entry_t cache_entry_t;
 
 /**
  * Private data of a fsm_listener_t object.
@@ -53,9 +54,26 @@ struct private_fsm_listener_t
 	fsm_kernel_ipsec_t *ipsec;
 
 	/**
+	 * List of cached interface names
+	 */
+	linked_list_t *iface_cache;
+
+	/**
 	 * DNS attribute handler
 	 */
 	fsm_updown_handler_t *handler;
+};
+
+/**
+ * Cache line in the interface name cache.
+ */
+struct cache_entry_t
+{
+	/** requid of the CHILD_SA */
+	u_int32_t reqid;
+
+	/** cached interface name */
+	char *iface;
 };
 
 
@@ -191,6 +209,62 @@ static u_int16_t get_port(traffic_selector_t *me, traffic_selector_t *other,
 }
 
 /**
+ * Insert an interface name to the cache
+ */
+static void cache_iface(private_fsm_listener_t *this, u_int32_t reqid,
+	char *iface)
+{
+	cache_entry_t *entry = NULL;
+
+	if (!this || !this->iface_cache)
+	{
+		return;
+	}
+
+	entry = malloc_thing(cache_entry_t);
+	if (entry)
+	{
+		entry->reqid = reqid;
+		entry->iface = strdup(iface);
+
+		this->iface_cache->insert_first(this->iface_cache, entry);
+	}
+}
+
+/**
+ * Remove a cached interface name and return it.
+ */
+static char *uncache_iface(private_fsm_listener_t *this, u_int32_t reqid)
+{
+	enumerator_t *enumerator;
+	cache_entry_t *entry;
+	char *iface = NULL;
+
+	if (!this || !this->iface_cache)
+	{
+		return NULL;
+	}
+
+	enumerator = this->iface_cache->create_enumerator(this->iface_cache);
+	if (enumerator)
+	{
+		while (enumerator->enumerate(enumerator, &entry))
+		{
+			if (entry->reqid == reqid)
+			{
+				this->iface_cache->remove_at(this->iface_cache, enumerator);
+				iface = entry->iface;
+				free(entry);
+				break;
+			}
+		}
+		enumerator->destroy(enumerator);
+	}
+
+	return iface;
+}
+
+/**
  * Invoke the updown script once for given traffic selectors
  */
 static void invoke_once(private_fsm_listener_t *this, ike_sa_t *ike_sa,
@@ -226,8 +300,28 @@ static void invoke_once(private_fsm_listener_t *this, ike_sa_t *ike_sa,
 			 is_ipv6 ? "-v6" : "");
 	push_env(envp, countof(envp), "PLUTO_CONNECTION=%s",
 			 config->get_name(config));
+
+	if (up)
+	{
+		if (iface)
+		{
+			cache_iface(this, child_sa->get_reqid(child_sa), iface);
+		}
+	}
+	else
+	{
+		iface = uncache_iface(this, child_sa->get_reqid(child_sa));
+	}
+
 	push_env(envp, countof(envp), "PLUTO_INTERFACE=%s",
 			 iface ? iface : "unknown");
+
+	if (!up && iface)
+	{
+		/* Free the previously cached iface */
+		free(iface);
+	}
+
 	push_env(envp, countof(envp), "PLUTO_REQID=%u",
 			 child_sa->get_reqid(child_sa));
 	push_env(envp, countof(envp), "PLUTO_PROTO=%s",
@@ -358,16 +452,16 @@ METHOD(listener_t, child_updown, bool, private_fsm_listener_t *this,
 		return TRUE;
 	}
 
-	/* Retrieve the tunnel interface for the given IKE SA */
+	DBG2(DBG_IKE, "Entering %s in fsm_listener: IKE_SA %u CHILD_SA %u %s",
+		__FUNCTION__, ike_sa->get_unique_id(ike_sa),
+		child_sa->get_unique_id(child_sa), ((up) ? "up" : "down"));
+
+	/* Retrieve the tunnel interface for the given IKE SA, if available */
 	status = this->ipsec->get_tunnel_iface(this->ipsec,
 		ike_sa->get_unique_id(ike_sa), &iface);
-	if ((status != SUCCESS) || !iface)
+	if (status != SUCCESS)
 	{
-		/* NOTE: TRUE does not indicate success here. Rather, it indicates that
-		 * this handler should remain registered to be called again at a future
-		 * point.
-		 */
-		return TRUE;
+		iface = NULL;
 	}
 
 	config = child_sa->get_config(child_sa);
@@ -578,6 +672,7 @@ METHOD(fsm_listener_t, destroy, void, private_fsm_listener_t *this)
 		DESTROY_IF(this->handler);
 	}
 
+	DESTROY_IF(this->iface_cache);
 	free(this);
 }
 
@@ -610,9 +705,10 @@ fsm_listener_t *fsm_listener_create(fsm_kernel_ipsec_t *ipsec)
 		},
 		.ipsec = ipsec,
 		.handler = NULL,
+		.iface_cache = linked_list_create(),
 		);
 
-	if (!this)
+	if (!this || !this->iface_cache)
 	{
 		return NULL;
 	}
