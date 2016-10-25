@@ -372,9 +372,24 @@ struct sa_expire_t
 	private_fsm_kernel_ipsec_t *ipsec;
 
 	/**
-	 * SA entry
+	 * SA protocol
 	 */
-	sa_t *sa;
+	u_int8_t protocol;
+
+	/**
+	 * SA SPI
+	 */
+	u_int32_t spi;
+
+	/**
+	 * SA destination
+	 */
+	host_t *dst;
+
+	/**
+	 * SA direction
+	 */
+	bool inbound;
 
 	/**
 	 * hard offset
@@ -540,39 +555,46 @@ static job_requeue_t sa_expired(sa_expire_t *entry)
 {
 	status_t status = FAILED;
 	u_int32_t hard_offset;
+	sa_t *sa = NULL;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec", __FUNCTION__);
 
-	if (!entry || !entry->sa || !entry->ipsec || !entry->ipsec->sas)
+	if (!entry || !entry->dst || !entry->ipsec || !entry->ipsec->sas)
 	{
 		goto requeue_none;
 	}
+
+	DBG2(DBG_KNL, "%s: SA entry %p %u/0x%08x/%H", __FUNCTION__,
+		entry, entry->protocol, entry->spi, entry->dst);
 
 	/* Check SA to be sure it still exists */
 	entry->ipsec->sas_mutex->lock(entry->ipsec->sas_mutex);
-	status = entry->ipsec->sas->find_first(entry->ipsec->sas, NULL,
-		(void **)&entry->sa);
+	status = entry->ipsec->sas->find_first(entry->ipsec->sas,
+		(linked_list_match_t)match_sa_by_spi_inbound,
+		(void **)&sa, &entry->spi, &entry->inbound);
 	entry->ipsec->sas_mutex->unlock(entry->ipsec->sas_mutex);
-	if ((status != SUCCESS) || !entry->sa->mutex)
+	if ((status == SUCCESS) && sa)
 	{
-		goto requeue_none;
-	}
-
-	hard_offset = entry->hard_offset;
-	/* Call kernel_handler expire, which will rekey/delete the SA */
-	hydra->kernel_interface->expire(hydra->kernel_interface,
-		entry->sa->protocol, entry->sa->spi, entry->sa->dst,
-		(hard_offset == 0));
-
-	if (hard_offset)
-	{
-		/* soft limit reached, schedule hard expire */
-		entry->hard_offset = 0;
-		return JOB_RESCHEDULE(hard_offset);
+		hard_offset = entry->hard_offset;
+		/* Call kernel_handler expire, which will rekey/delete the SA */
+		hydra->kernel_interface->expire(hydra->kernel_interface,
+			entry->protocol, entry->spi, entry->dst, (hard_offset == 0));
 	}
 
 requeue_none:
 	return JOB_REQUEUE_NONE;
+}
+
+static void sa_expiry_cleanup(sa_expire_t *entry)
+{
+	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec entry %p", __FUNCTION__,
+		entry);
+
+	if (entry)
+	{
+		DESTROY_IF(entry->dst);
+		free(entry);
+	}
 }
 
 /**
@@ -592,7 +614,7 @@ static void schedule_expiration(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 		return;
 	}
 
-	if (!sa)
+	if (!sa || !sa->dst)
 	{
 		DBG2(DBG_KNL, "%s: Could not schedule rekey/expire timer, sa NULL",
 			__FUNCTION__);
@@ -607,10 +629,13 @@ static void schedule_expiration(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 
 	INIT(entry,
 		.ipsec = this,
-		.sa = sa,
+		.protocol = sa->protocol,
+		.spi = sa->spi,
+		.dst = sa->dst->clone(sa->dst),
+		.inbound = sa->decap,
 		);
 
-	if (!entry)
+	if (!entry || !entry->dst)
 	{
 		DBG2(DBG_KNL, "%s: could not init entry, no expiration scehduled!",
 			__FUNCTION__);
@@ -631,13 +656,14 @@ static void schedule_expiration(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 	}
 
 	job = callback_job_create((callback_job_cb_t)sa_expired, entry,
-		(callback_job_cleanup_t)free, (callback_job_cancel_t)free);
+		(callback_job_cleanup_t)sa_expiry_cleanup,
+		(callback_job_cancel_t)sa_expiry_cleanup);
 
 	if (!job)
 	{
 		DBG2(DBG_KNL, "%s: could not init job, no expiration scheduled!",
 			__FUNCTION__);
-		free(entry);
+		sa_expiry_cleanup(entry);
 		return;
 	}
 
