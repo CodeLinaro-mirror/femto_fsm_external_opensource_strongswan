@@ -219,6 +219,11 @@ struct tunnel_t
 	u_int32_t ike_sa_id;
 
 	/**
+	 * Previous Unique ID of the IKE SA this tunnel is associated with.
+	 */
+	u_int32_t old_ike_sa_id;
+
+	/**
 	 * Interface name of the tunnel. This is assigned by the NSS IPsec driver.
 	 */
 	char ifname[IFNAMSIZ];
@@ -394,7 +399,7 @@ struct sa_expire_t
 	/**
 	 * hard offset
 	 */
-	u_int32_t hard_offset;
+	u_int64_t hard_offset;
 };
 
 typedef struct icv_len_t icv_len_t;
@@ -492,6 +497,15 @@ static bool match_tunnel_by_id(tunnel_t *tunnel, u_int32_t *ike_sa_id)
 	return (tunnel->ike_sa_id == *ike_sa_id);
 }
 
+static bool match_tunnel_by_old_id(tunnel_t *tunnel, u_int32_t *old_ike_sa_id)
+{
+	if (!tunnel || !old_ike_sa_id)
+	{
+		return FALSE;
+	}
+	return (tunnel->old_ike_sa_id == *old_ike_sa_id);
+}
+
 METHOD(kernel_ipsec_t, get_features, kernel_feature_t,
 	private_fsm_kernel_ipsec_t *this)
 {
@@ -554,7 +568,6 @@ METHOD(kernel_ipsec_t, get_cpi, status_t,
 static job_requeue_t sa_expired(sa_expire_t *entry)
 {
 	status_t status = FAILED;
-	u_int32_t hard_offset;
 	sa_t *sa = NULL;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec", __FUNCTION__);
@@ -564,8 +577,9 @@ static job_requeue_t sa_expired(sa_expire_t *entry)
 		goto requeue_none;
 	}
 
-	DBG2(DBG_KNL, "%s: SA entry %p %u/0x%08x/%H", __FUNCTION__,
-		entry, entry->protocol, entry->spi, entry->dst);
+	DBG2(DBG_KNL, "%s: SA entry %p %u/0x%08x/%H %s", __FUNCTION__,
+		entry, entry->protocol, entry->spi, entry->dst,
+		IPSEC_DIR_STR(entry->inbound));
 
 	/* Check SA to be sure it still exists */
 	entry->ipsec->sas_mutex->lock(entry->ipsec->sas_mutex);
@@ -573,12 +587,23 @@ static job_requeue_t sa_expired(sa_expire_t *entry)
 		(linked_list_match_t)match_sa_by_spi_inbound,
 		(void **)&sa, &entry->spi, &entry->inbound);
 	entry->ipsec->sas_mutex->unlock(entry->ipsec->sas_mutex);
-	if ((status == SUCCESS) && sa)
+	if ((status == SUCCESS) && sa && sa->mutex)
 	{
-		hard_offset = entry->hard_offset;
-		/* Call kernel_handler expire, which will rekey/delete the SA */
-		hydra->kernel_interface->expire(hydra->kernel_interface,
-			entry->protocol, entry->spi, entry->dst, (hard_offset == 0));
+		sa->mutex->lock(sa->mutex);
+		if (sa->tunnel && sa->tunnel->mutex)
+		{
+			/* Make sure the IKE SA is not reauthenticating */
+			sa->tunnel->mutex->lock(sa->tunnel->mutex);
+			if (sa->tunnel->old_ike_sa_id == 0)
+			{
+				/* Call kernel_handler expire, which will rekey/delete the SA */
+				hydra->kernel_interface->expire(hydra->kernel_interface,
+					entry->protocol, entry->spi, entry->dst,
+					(entry->hard_offset == 0));
+			}
+			sa->tunnel->mutex->unlock(sa->tunnel->mutex);
+		}
+		sa->mutex->unlock(sa->mutex);
 	}
 
 requeue_none:
@@ -605,7 +630,7 @@ static void schedule_expiration(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 	lifetime_cfg_t *lifetime = NULL;
 	sa_expire_t *entry = NULL;
 	callback_job_t *job = NULL;
-	u_int32_t timeout = 0;
+	u_int64_t timeout = 0;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec", __FUNCTION__);
 
@@ -635,16 +660,23 @@ static void schedule_expiration(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 		.inbound = sa->decap,
 		);
 
-	if (!entry || !entry->dst)
+	if (!entry)
 	{
 		DBG2(DBG_KNL, "%s: could not init entry, no expiration scehduled!",
 			__FUNCTION__);
 		return;
 	}
 
-	/* schedule a rekey first, a hard timeout will be scheduled then, if any */
+	if (!entry->dst)
+	{
+		DBG2(DBG_KNL, "%s: could not init entry dst, no expiration scehduled!",
+			__FUNCTION__);
+		sa_expiry_cleanup(entry);
+		return;
+	}
+
+	/* schedule a soft rekey or a hard timeout */
 	lifetime = &sa->lifetime;
-	entry->hard_offset = lifetime->time.life - lifetime->time.rekey;
 	timeout = lifetime->time.rekey;
 
 	if (lifetime->time.life <= lifetime->time.rekey ||
@@ -653,6 +685,10 @@ static void schedule_expiration(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 		/* no rekey, schedule hard timeout */
 		entry->hard_offset = 0;
 		timeout = lifetime->time.life;
+	}
+	else
+	{
+		entry->hard_offset = lifetime->time.life - lifetime->time.rekey;
 	}
 
 	job = callback_job_create((callback_job_cb_t)sa_expired, entry,
@@ -666,6 +702,9 @@ static void schedule_expiration(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 		sa_expiry_cleanup(entry);
 		return;
 	}
+
+	DBG2(DBG_KNL, "%s: life %llu rekey %llu entry %p", __FUNCTION__,
+		lifetime->time.life, lifetime->time.rekey, entry);
 
 	lib->scheduler->schedule_job(lib->scheduler, (job_t *)job, timeout);
 	DBG2(DBG_KNL, "%s: Scheduled %s expiration job in %us", __FUNCTION__,
@@ -1773,10 +1812,6 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 	}
 
 	sa->mutex->lock(sa->mutex);
-	/* Add to the linked list */
-	this->sas_mutex->lock(this->sas_mutex);
-	this->sas->insert_last(this->sas, sa);
-	this->sas_mutex->unlock(this->sas_mutex);
 
 	sa->family = sa->dst->get_family(sa->dst);
 	status = populate_sa(sa);
@@ -1792,6 +1827,11 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 			__FUNCTION__, spi, IPSEC_DIR_STR(inbound));
 		goto errorexit;
 	}
+
+	/* Add to the linked list */
+	this->sas_mutex->lock(this->sas_mutex);
+	this->sas->insert_last(this->sas, sa);
+	this->sas_mutex->unlock(this->sas_mutex);
 
 	/* Increment the tunnel reference count so it's clear an SA is using it. */
 	tunnel->mutex->lock(tunnel->mutex);
@@ -2361,6 +2401,7 @@ METHOD(fsm_kernel_ipsec_t, create_tunnel, status_t,
 	INIT(tunnel,
 		.ref = 1,
 		.ike_sa_id = ike_sa_id,
+		.old_ike_sa_id = 0,
 		.mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
 		.flow = NULL,
 		);
@@ -2490,6 +2531,7 @@ METHOD(fsm_kernel_ipsec_t, migrate_tunnel, status_t,
 
 	tunnel->mutex->lock(tunnel->mutex);
 	tunnel->ike_sa_id = new_ike_sa_id;
+	tunnel->old_ike_sa_id = old_ike_sa_id;
 
 	DBG2(DBG_KNL, "%s: Migrated tunnel %s from IKE SA %u to %u", __FUNCTION__,
 		tunnel->ifname, old_ike_sa_id, new_ike_sa_id);
@@ -2522,13 +2564,26 @@ METHOD(fsm_kernel_ipsec_t, delete_tunnel, status_t,
 	status = this->tunnels->find_first(this->tunnels,
 		(linked_list_match_t)match_tunnel_by_id,
 		(void **)&tunnel, &ike_sa_id);
-	this->tunnels_mutex->unlock(this->tunnels_mutex);
 	if ((status != SUCCESS) || !tunnel)
 	{
-		DBG2(DBG_KNL, "%s: Could not find tunnel for IKE SA %u", __FUNCTION__,
-			ike_sa_id);
+		status = this->tunnels->find_first(this->tunnels,
+			(linked_list_match_t)match_tunnel_by_old_id,
+			(void **)&tunnel, &ike_sa_id);
+		if ((status != SUCCESS) || !tunnel)
+		{
+			DBG2(DBG_KNL, "%s: Could not find tunnel for IKE SA %u",
+				__FUNCTION__, ike_sa_id);
+		}
+		else
+		{
+			tunnel->mutex->lock(tunnel->mutex);
+			tunnel->old_ike_sa_id = 0;
+			tunnel->mutex->unlock(tunnel->mutex);
+		}
+		this->tunnels_mutex->unlock(this->tunnels_mutex);
 		return SUCCESS;
 	}
+	this->tunnels_mutex->unlock(this->tunnels_mutex);
 
 	/* Decrement the refcount and destroy the tunnel if no SAs are using it. */
 	tunnel->mutex->lock(tunnel->mutex);
@@ -2565,7 +2620,7 @@ METHOD(fsm_kernel_ipsec_t, get_tunnel_iface, status_t,
 	this->tunnels_mutex->unlock(this->tunnels_mutex);
 	if ((status != SUCCESS) || !tunnel)
 	{
-		DBG2(DBG_KNL, "%s: Could not find tunnel for IKE SA %u", __FUNCTION__,
+		DBG3(DBG_KNL, "%s: Could not find tunnel for IKE SA %u", __FUNCTION__,
 			ike_sa_id);
 		return FAILED;
 	}

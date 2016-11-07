@@ -389,7 +389,7 @@ fsm_public_key_t *fsm_public_key_load(key_type_t type, va_list args)
 	private_fsm_public_key_t *this;
 	chunk_t blob = chunk_empty;
 
-	DBG2(DBG_IKE, "Entering %s in fsm_private_key", __FUNCTION__);
+	DBG2(DBG_IKE, "Entering %s in fsm_public_key", __FUNCTION__);
 
 	if (type != KEY_RSA)
 	{
