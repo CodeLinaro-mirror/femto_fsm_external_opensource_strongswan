@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -121,6 +121,8 @@ struct private_fsm_netlink_ipsec_t
 
 #define IPSEC_DEFAULT_TIMEOUT 1000
 #define IPSEC_DEFAULT_ERR_TIMEOUT 200
+
+#define BOOL_TO_STR(val) ((val) ? "true" : "false")
 
 typedef struct stats_t stats_t;
 struct stats_t
@@ -254,13 +256,13 @@ CALLBACK(ipsec_mcast_resp, void, private_fsm_netlink_ipsec_t *this,
 	{
 		case NSS_IPSECMGR_SA_TYPE_V4:
 			DBG3(DBG_KNL,
-				"%s: spi 0x%08x src 0x%08x dst 0x%08x ttl %u seq %u crypto %u "
-				"bytes %u count %u", __FUNCTION__,
+				"%s: spi 0x%08x src 0x%08x dst 0x%08x ttl %u seq %llu crypto %u"
+				" bytes %u count %u esn %s", __FUNCTION__,
 				nss_stats->sa.data.v4.spi_index,
 				nss_stats->sa.data.v4.src_ip, nss_stats->sa.data.v4.dst_ip,
 				nss_stats->sa.data.v4.ttl, nss_stats->seq_num,
 				nss_stats->crypto_index, nss_stats->pkts.bytes,
-				nss_stats->pkts.count);
+				nss_stats->pkts.count, BOOL_TO_STR(nss_stats->esn_enabled));
 
 			spi = nss_stats->sa.data.v4.spi_index;
 			break;
@@ -268,7 +270,8 @@ CALLBACK(ipsec_mcast_resp, void, private_fsm_netlink_ipsec_t *this,
 		case NSS_IPSECMGR_SA_TYPE_V6:
 			DBG3(DBG_KNL,
 				"%s: spi 0x%08x src 0x%08x%08x%08x%08x dst 0x%08x%08x%08x%08x "
-				"hl %u seq %u crypto %u bytes %u count %u", __FUNCTION__,
+				"hl %u seq %llu crypto %u bytes %u count %u esn %s",
+				__FUNCTION__,
 				nss_stats->sa.data.v6.spi_index,
 				nss_stats->sa.data.v6.src_ip[0],
 				nss_stats->sa.data.v6.src_ip[1],
@@ -280,7 +283,7 @@ CALLBACK(ipsec_mcast_resp, void, private_fsm_netlink_ipsec_t *this,
 				nss_stats->sa.data.v6.dst_ip[3],
 				nss_stats->sa.data.v6.hop_limit, nss_stats->seq_num,
 				nss_stats->crypto_index, nss_stats->pkts.bytes,
-				nss_stats->pkts.count);
+				nss_stats->pkts.count, BOOL_TO_STR(nss_stats->esn_enabled));
 
 			spi = nss_stats->sa.data.v6.spi_index;
 			break;
@@ -661,11 +664,10 @@ static status_t populate_v6_sa(struct nss_nlipsec_rule *rule_ptr,
 	return status;
 }
 
-#define BOOL_TO_STR(val) ((val) ? "true" : "false")
-
 static status_t populate_sa_data(struct nss_nlipsec_rule *rule_ptr,
 	u_int32_t crypto_index, u_int16_t icv_len, u_int16_t replay_win, bool nat,
-	bool seq_skip, bool trailer_skip, bool use_pattern, u_int32_t mark)
+	bool seq_skip, bool trailer_skip, bool use_pattern, u_int32_t mark,
+	bool esn)
 {
 	status_t status = SUCCESS;
 	struct nss_ipsecmgr_sa_data *sa_data = NULL;
@@ -683,6 +685,7 @@ static status_t populate_sa_data(struct nss_nlipsec_rule *rule_ptr,
 	sa_data->esp.nat_t_req = nat;
 	sa_data->esp.seq_skip = seq_skip;
 	sa_data->esp.trailer_skip = trailer_skip;
+	sa_data->enable_esn = esn;
 
 	if (mark > NSS_IPSECMGR_MAX_DSCP)
 	{
@@ -696,10 +699,12 @@ static status_t populate_sa_data(struct nss_nlipsec_rule *rule_ptr,
 	}
 
 	DBG2(DBG_KNL,
-		"%s: crypto %u icv_len %u replay_win %u nat %s dscp %u dscp copy %s",
+		"%s: crypto %u icv_len %u replay_win %u nat %s dscp %u dscp copy %s "
+		"esn %s",
 		__FUNCTION__, sa_data->crypto_index, sa_data->esp.icv_len,
 		sa_data->esp.replay_win, BOOL_TO_STR(sa_data->esp.nat_t_req),
-		sa_data->esp.dscp, BOOL_TO_STR(sa_data->esp.dscp_copy));
+		sa_data->esp.dscp, BOOL_TO_STR(sa_data->esp.dscp_copy),
+		BOOL_TO_STR(sa_data->enable_esn));
 
 	return status;
 }
@@ -770,7 +775,8 @@ METHOD(fsm_netlink_ipsec_t, add_encap_flow, status_t,
 	u_int32_t protocol_nh, u_int32_t *outer_src, u_int32_t *outer_dst,
 	u_int32_t outer_family, u_int32_t spi, u_int32_t ttl_hl,
 	u_int32_t crypto_index, u_int16_t icv_len, u_int16_t replay_win, bool nat,
-	bool seq_skip, bool trailer_skip, bool use_pattern, u_int32_t mark)
+	bool seq_skip, bool trailer_skip, bool use_pattern, u_int32_t mark,
+	bool esn)
 {
 	status_t status = SUCCESS;
 	struct nss_nlipsec_rule rule;
@@ -792,7 +798,7 @@ METHOD(fsm_netlink_ipsec_t, add_encap_flow, status_t,
 	}
 
 	status = populate_sa_data(&rule, crypto_index, icv_len, replay_win, nat,
-		seq_skip, trailer_skip, use_pattern, mark);
+		seq_skip, trailer_skip, use_pattern, mark, esn);
 	if (status != SUCCESS)
 	{
 		return status;
@@ -891,7 +897,8 @@ METHOD(fsm_netlink_ipsec_t, add_encap_subnet, status_t,
 	u_int32_t protocol_nh, u_int32_t *outer_src, u_int32_t *outer_dst,
 	u_int32_t outer_family, u_int32_t spi, u_int32_t ttl_hl,
 	u_int32_t crypto_index, u_int16_t icv_len, u_int16_t replay_win, bool nat,
-	bool seq_skip, bool trailer_skip, bool use_pattern, u_int32_t mark)
+	bool seq_skip, bool trailer_skip, bool use_pattern, u_int32_t mark,
+	bool esn)
 {
 	status_t status = SUCCESS;
 	struct nss_nlipsec_rule rule;
@@ -914,7 +921,7 @@ METHOD(fsm_netlink_ipsec_t, add_encap_subnet, status_t,
 	}
 
 	status = populate_sa_data(&rule, crypto_index, icv_len, replay_win, nat,
-		seq_skip, trailer_skip, use_pattern, mark);
+		seq_skip, trailer_skip, use_pattern, mark, esn);
 	if (status != SUCCESS)
 	{
 		return status;
@@ -1026,7 +1033,7 @@ METHOD(fsm_netlink_ipsec_t, add_decap_sa, status_t,
 	u_int32_t *outer_src, u_int32_t *outer_dst, u_int32_t outer_family,
 	u_int32_t spi, u_int32_t ttl_hl, u_int32_t crypto_index, u_int16_t icv_len,
 	u_int16_t replay_win, bool nat, bool seq_skip, bool trailer_skip,
-	bool use_pattern)
+	bool use_pattern, bool esn)
 {
 	status_t status = SUCCESS;
 	struct nss_nlipsec_rule rule;
@@ -1058,7 +1065,7 @@ METHOD(fsm_netlink_ipsec_t, add_decap_sa, status_t,
 	 * ever modified on outbound (encap) traffic.
 	 */
 	status = populate_sa_data(&rule, crypto_index, icv_len, replay_win, nat,
-		seq_skip, trailer_skip, use_pattern, 0);
+		seq_skip, trailer_skip, use_pattern, 0, esn);
 	if (status != SUCCESS)
 	{
 		return status;

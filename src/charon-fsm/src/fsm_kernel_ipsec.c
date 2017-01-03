@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  * Copyright (C) 2006-2015 Tobias Brunner
  * Copyright (C) 2005-2009 Martin Willi
  * Copyright (C) 2008 Andreas Steffen
@@ -363,6 +363,11 @@ struct sa_t
 	 * DSCP mark value
 	 */
 	mark_t mark;
+
+	/**
+	 * TRUE if Extended Sequence Numbers is enabled
+	 */
+	bool esn;
 };
 
 /**
@@ -1139,7 +1144,7 @@ static status_t add_decap_sa(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 		&sa->rule.src[0], &sa->rule.dst[0], sa->family, sa->rule.spi,
 		sa->rule.ttl_hl, sa->crypto_index, icv->icv_len,
 		(u_int16_t)sa->replay_window, sa->nat, seq_skip, trailer_skip,
-		use_pattern);
+		use_pattern, sa->esn);
 	if (status != SUCCESS)
 	{
 		DBG2(DBG_KNL, "%s: Failed to add decap rule", __FUNCTION__);
@@ -1607,7 +1612,7 @@ static status_t add_encap_flow(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 		sa->tunnel->ifname, &src[0], &dst[0], family, proto, &sa->rule.src[0],
 		&sa->rule.dst[0], sa->family, sa->rule.spi, sa->rule.ttl_hl,
 		sa->crypto_index, icv->icv_len, (u_int16_t)sa->replay_window, sa->nat,
-		FALSE, FALSE, FALSE, sa->mark.value);
+		FALSE, FALSE, FALSE, sa->mark.value, sa->esn);
 
 exitfunc:
 	return status;
@@ -1678,7 +1683,7 @@ static status_t add_encap_subnet(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 		&sa->rule.src[0], &sa->rule.dst[0], sa->family, sa->rule.spi,
 		sa->rule.ttl_hl, sa->crypto_index, icv->icv_len,
 		(u_int16_t)sa->replay_window, sa->nat, FALSE, FALSE, FALSE,
-		sa->mark.value);
+		sa->mark.value, sa->esn);
 
 exitfunc:
 	DESTROY_IF(netmask);
@@ -1708,7 +1713,6 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 	(void)ipcomp;
 	(void)cpi;
 	(void)initiator;
-	(void)esn;
 	(void)update;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec mode %N protocol %u "
@@ -1783,6 +1787,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 		.int_alg = int_alg,
 		.int_len = int_key.len,
 		.mark = mark,
+		.esn = esn,
 		);
 
 	if (!sa)
