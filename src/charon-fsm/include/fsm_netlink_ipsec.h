@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -82,6 +82,7 @@ struct fsm_netlink_ipsec_t
 	 * @param  trailer_skip	TRUE to skip ESP trailer
 	 * @param  use_pattern	TRUE to use random pattern in hash calculation
 	 * @param  mark			DSCP mark
+	 * @param  esn			TRUE to enable Extended Sequence Numbers
 	 * @return status_t
 	 */
 	status_t (*add_encap_flow)(fsm_netlink_ipsec_t *this,
@@ -90,7 +91,7 @@ struct fsm_netlink_ipsec_t
 		u_int32_t *outer_dst, u_int32_t outer_family, u_int32_t spi,
 		u_int32_t ttl_hl, u_int32_t crypto_index, u_int16_t icv_len,
 		u_int16_t replay_win, bool nat, bool seq_skip, bool trailer_skip,
-		bool use_pattern, u_int32_t mark);
+		bool use_pattern, u_int32_t mark, bool esn);
 
 	/**
 	 * Add an encapsulation rule for destination subnet (tunnel must exist)
@@ -114,6 +115,7 @@ struct fsm_netlink_ipsec_t
 	 * @param  trailer_skip		TRUE to skip ESP trailer
 	 * @param  use_pattern		TRUE to use random pattern in hash calculation
 	 * @param  mark				DSCP mark
+	 * @param  esn				TRUE to enable Extended Sequence Numbers
 	 * @return status_t
 	 */
 	status_t (*add_encap_subnet)(fsm_netlink_ipsec_t *this,
@@ -122,7 +124,7 @@ struct fsm_netlink_ipsec_t
 		u_int32_t *outer_dst, u_int32_t outer_family, u_int32_t spi,
 		u_int32_t ttl_hl, u_int32_t crypto_index, u_int16_t icv_len,
 		u_int16_t replay_win, bool nat, bool seq_skip, bool trailer_skip,
-		bool use_pattern, u_int32_t mark);
+		bool use_pattern, u_int32_t mark, bool esn);
 
 	/**
 	 * Delete an encapsulation flow for explicit hosts (tunnel and flow and must
@@ -202,13 +204,14 @@ struct fsm_netlink_ipsec_t
 	 * @param  seq_skip		TRUE to skip ESP sequence
 	 * @param  trailer_skip	TRUE to skip ESP trailer
 	 * @param  use_pattern	TRUE to use random pattern in hash calculation
+	 * @param  esn			TRUE to enable Extended Sequence Numbers
 	 * @return status_t
 	 */
 	status_t (*add_decap_sa)(fsm_netlink_ipsec_t *this, char ifname[IFNAMSIZ],
 		u_int32_t *outer_src, u_int32_t *outer_dst, u_int32_t outer_family,
 		u_int32_t spi, u_int32_t ttl_hl, u_int32_t crypto_index,
 		u_int16_t icv_len, u_int16_t replay_win, bool nat, bool seq_skip,
-		bool trailer_skip, bool use_pattern);
+		bool trailer_skip, bool use_pattern, bool esn);
 
 	/**
 	 * Delete a decapsulation SA (tunnel and SA and must exist)
