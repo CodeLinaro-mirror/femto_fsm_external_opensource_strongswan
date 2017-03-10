@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Tobias Brunner
  * Copyright (C) 2009 Martin Willi
  * Copyright (C) 2001-2008 Andreas Steffen
@@ -66,7 +66,7 @@ static bool present(char* pattern, chunk_t* ch)
 {
 	u_int len = strlen(pattern);
 
-	if (ch->len >= len && strneq(ch->ptr, pattern, len))
+	if (ch->len >= len && strneq((char *)(ch->ptr), pattern, len))
 	{
 		*ch = chunk_skip(*ch, len);
 		return TRUE;
@@ -200,7 +200,7 @@ static status_t pem_to_bin(chunk_t *blob, bool *pgp)
 				{
 					state = PEM_ABORT;
 				}
-				data = chunk_from_base64(data, dst.ptr);
+				data = chunk_from_base64(data, (char *)(dst.ptr));
 
 				dst.ptr += data.len;
 				dst.len += data.len;
