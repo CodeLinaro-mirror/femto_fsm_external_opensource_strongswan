@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -148,7 +148,7 @@ static algorithm_t enc_algs[] =
 	{ ENCR_DES, NSS_CRYPTO_CIPHER_DES, 36, 16, 44, 16 },
 	{ ENCR_3DES, NSS_CRYPTO_CIPHER_DES, 36, 16, 44, 16 },
 	{ ENCR_NULL, NSS_CRYPTO_CIPHER_NULL, 0, 0, 0, 0 },
-	{ ENCR_AES_CBC, NSS_CRYPTO_CIPHER_AES, 44, 24, 52, 24 },
+	{ ENCR_AES_CBC, NSS_CRYPTO_CIPHER_AES_CBC, 44, 24, 52, 24 },
 };
 
 /**

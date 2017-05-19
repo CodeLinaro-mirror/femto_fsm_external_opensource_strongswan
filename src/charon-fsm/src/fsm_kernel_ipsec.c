@@ -33,6 +33,7 @@
 #include <errno.h>
 #include <string.h>
 #include <fcntl.h>
+#include <nss_def.h>
 #include <nss_cmn.h>
 #include <nss_crypto.h>
 #include <daemon.h>
