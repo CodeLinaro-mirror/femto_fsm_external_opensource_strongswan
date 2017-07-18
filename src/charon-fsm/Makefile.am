@@ -20,7 +20,7 @@ charon_fsm_SOURCES = \
 charon-fsm.o :	$(top_builddir)/config.status
 
 AM_CPPFLAGS = \
-	-g -Wall -Wextra -Werror -MD -MP \
+	$(QCT_CPPFLAGS) -Wextra -MMD -MP \
 	-I$(SYSROOT)/usr/include/libnl3 \
 	-I$(top_srcdir)/src/libstrongswan \
 	-I$(top_srcdir)/src/libhydra \
@@ -33,7 +33,9 @@ AM_CPPFLAGS = \
 	-DROUTING_TABLE_PRIO=${routing_table_prio}
 
 AM_CFLAGS = \
-	$(PLUGIN_CFLAGS)
+	$(QCT_CFLAGS) \
+	$(PLUGIN_CFLAGS) \
+	-Wno-strict-prototypes -Wno-missing-declarations
 
 AM_LDFLAGS = $(QCT_LDFLAGS)
 
@@ -42,7 +44,7 @@ charon_fsm_LDADD = \
 	$(top_builddir)/src/libhydra/libhydra.la \
 	$(top_builddir)/src/libcharon/libcharon.la \
 	-lm -lQsecureFsmApi -lQsecureIkeApi -lnl-3 -lnl-genl-3 \
-	$(PTHREADLIB) $(DLLIB)
+	$(PTHREADLIB) $(DLLIB) $(QCT_LIBDIRS)
 
 SUBDIRS = .
 SUBDIRS += tests tools/fsm_privkey
