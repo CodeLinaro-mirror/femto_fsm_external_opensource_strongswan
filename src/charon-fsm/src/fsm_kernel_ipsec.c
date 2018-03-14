@@ -21,6 +21,7 @@
 
 #include <utils/utils/types.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <stdint.h>
@@ -63,6 +64,11 @@
 
 #define IPSEC_DIR_STR(inbound) ((inbound) ? "inbound" : "outbound")
 
+/**
+ * Kernel sysfs dir which indicates whether ECM is enabled.
+ */
+#define ECM_MODE_DIR "/sys/kernel/debug/ecm"
+
 typedef struct private_fsm_kernel_ipsec_t private_fsm_kernel_ipsec_t;
 
 /**
@@ -79,6 +85,11 @@ struct private_fsm_kernel_ipsec_t
 	 * Secure mode
 	 */
 	bool secure_mode;
+
+	/**
+	 * ECM mode
+	 */
+	bool ecm_mode;
 
 	/**
 	 * Mutex to lock access to installed SAs
@@ -1887,22 +1898,26 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 			goto delsa;
 		}
 
-		if (!tunnel->flow)
+		/* Only add IP flow rule if ECM mode is disabled */
+		if (!this->ecm_mode)
 		{
-			/* Need an IP flow rule for this tunnel */
-			status = add_ip_flow_rule(this, sa);
-			if (status != SUCCESS)
+			if (!tunnel->flow)
 			{
-				DBG1(DBG_KNL,
-					"%s: Error: Failed to add flow rule for ifname %s",
-					__FUNCTION__, tunnel->ifname);
-				goto delsa;
+				/* Need an IP flow rule for this tunnel */
+				status = add_ip_flow_rule(this, sa);
+				if (status != SUCCESS)
+				{
+					DBG1(DBG_KNL,
+						"%s: Error: Failed to add flow rule for ifname %s",
+						__FUNCTION__, tunnel->ifname);
+					goto delsa;
+				}
 			}
-		}
-		else
-		{
-			DBG2(DBG_KNL, "%s: Flow rule exists for ifname %s", __FUNCTION__,
-				tunnel->ifname);
+			else
+			{
+				DBG2(DBG_KNL, "%s: Flow rule exists for ifname %s",
+					__FUNCTION__, tunnel->ifname);
+			}
 		}
 	}
 	else
@@ -2743,6 +2758,20 @@ METHOD(kernel_ipsec_t, destroy, void, private_fsm_kernel_ipsec_t *this)
 	free(this);
 }
 
+static bool get_ecm_mode(void)
+{
+	bool result;
+	struct stat stb;
+
+	/* No junk */
+	memset(&stb, 0, sizeof(stb));
+
+	/* Check if the path exists; if it does, ECM is enabled. */
+	result = (stat(ECM_MODE_DIR, &stb) == 0) ? TRUE : FALSE;
+
+	return result;
+}
+
 static fsm_kernel_ipsec_t *fsm_kernel_ipsec_create_default(bool secure_mode)
 {
 	private_fsm_kernel_ipsec_t *this = NULL;
@@ -2782,6 +2811,9 @@ static fsm_kernel_ipsec_t *fsm_kernel_ipsec_create_default(bool secure_mode)
 			.get_child_sa_id = _get_child_sa_id,
 		},
 		.secure_mode = secure_mode,
+		.ecm_mode = get_ecm_mode(),
+		.nl_ipv4 = NULL,
+		.nl_ipv6 = NULL,
 		.tunnels = linked_list_create(),
 		.tunnels_mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
 		.sas = linked_list_create(),
@@ -2826,20 +2858,26 @@ static fsm_kernel_ipsec_t *fsm_kernel_ipsec_create_default(bool secure_mode)
 		goto exitcleanup;
 	}
 
-	/* Create FSM netlink ip interface for IPv4 */
-	this->nl_ipv4 = fsm_netlink_ip_create(AF_INET);
-	if (!this->nl_ipv4)
+	/* Only create ip interfaces if ECM mode is disabled */
+	if (!this->ecm_mode)
 	{
-		DBG1(DBG_KNL, "%s: Error: Failed to allocate nl_ipv4!", __FUNCTION__);
-		goto exitcleanup;
-	}
+		/* Create FSM netlink ip interface for IPv4 */
+		this->nl_ipv4 = fsm_netlink_ip_create(AF_INET);
+		if (!this->nl_ipv4)
+		{
+			DBG1(DBG_KNL, "%s: Error: Failed to allocate nl_ipv4!",
+				__FUNCTION__);
+			goto exitcleanup;
+		}
 
-	/* Create FSM netlink ip interface for IPv6 */
-	this->nl_ipv6 = fsm_netlink_ip_create(AF_INET6);
-	if (!this->nl_ipv6)
-	{
-		DBG1(DBG_KNL, "%s: Error: Failed to allocate nl_ipv6!", __FUNCTION__);
-		goto exitcleanup;
+		/* Create FSM netlink ip interface for IPv6 */
+		this->nl_ipv6 = fsm_netlink_ip_create(AF_INET6);
+		if (!this->nl_ipv6)
+		{
+			DBG1(DBG_KNL, "%s: Error: Failed to allocate nl_ipv6!",
+				__FUNCTION__);
+			goto exitcleanup;
+		}
 	}
 
 	/* register bus listener */
