@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
  * Copyright (C) 2008 Tobias Brunner
  * Hochschule fuer Technik Rapperswil
  *
@@ -52,6 +52,12 @@ struct fsm_kernel_ipsec_t
 	 */
 	status_t (*get_tunnel_iface)(fsm_kernel_ipsec_t *this, u_int32_t ike_sa_id,
 		char **iface);
+
+	/**
+	 * Get the child SA ID for the SA with the given SPI
+	 */
+	status_t (*get_child_sa_id)(fsm_kernel_ipsec_t *this, u_int32_t spi,
+		bool inbound, u_int8_t *child_sa_id);
 };
 
 /**
@@ -60,5 +66,13 @@ struct fsm_kernel_ipsec_t
  * @return			fsm_kernel_ipsec_t instance or NULL
  */
 fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void);
+
+/**
+ * Create a netlink kernel ipsec interface instance in secure
+ * mode.
+ *
+ * @return			fsm_kernel_ipsec_t instance or NULL
+ */
+fsm_kernel_ipsec_t *fsm_kernel_ipsec_create_secure(void);
 
 #endif /** FSM_KERNEL_IPSEC_H_ @}*/

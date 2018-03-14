@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -80,8 +80,8 @@ struct fsm_netlink_crypto_t
 /**
  * Create an FSM netlink crypto instance
  *
- *
+ * @param  secure_mode	TRUE if secure mode is enabled
  * @return fsm_netlink_crypto_t * or NULL
  */
-fsm_netlink_crypto_t *fsm_netlink_crypto_create(void);
+fsm_netlink_crypto_t *fsm_netlink_crypto_create(bool secure_mode);
 #endif /* __FSM_NETLINK_CRYPTO_H*/

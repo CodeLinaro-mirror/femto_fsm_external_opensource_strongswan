@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
  * Copyright (C) 2012-2013 Reto Buerki
  * Copyright (C) 2012-2013 Adrian-Ken Rueegsegger
  * Hochschule fuer Technik Rapperswil
@@ -71,23 +71,27 @@ METHOD(private_key_t, sign, bool, private_fsm_private_key_t *this,
 
 	if (!signature || !data.ptr)
 	{
-		DBG2(DBG_IKE, "%s: Invalid arguments!", __FUNCTION__);
+		DBG2(DBG_IKE, "%s: Error: Invalid arguments!", __FUNCTION__);
 		return FALSE;
 	}
 
 	if (scheme != SIGN_RSA_EMSA_PKCS1_SHA256)
 	{
-		DBG2(DBG_IKE, "%s: scheme %N not supported!",
+		DBG2(DBG_IKE, "%s: Error: scheme %N not supported!",
 			__FUNCTION__, signature_scheme_names, scheme);
 		return FALSE;
 	}
 
 	if (sizeof(req.buf) < data.len)
 	{
-		DBG2(DBG_IKE, "%s: request buffer size %u < data len %u", __FUNCTION__,
-			sizeof(req.buf), data.len);
+		DBG2(DBG_IKE, "%s: Error: request buffer size %u < data len %u",
+			__FUNCTION__, sizeof(req.buf), data.len);
 		return FALSE;
 	}
+
+	/* No junk */
+	memset(&req, 0, sizeof(req));
+	memset(&rsp, 0, sizeof(rsp));
 
 	req.rsa_pad = CE_RSA_PAD_PKCS1_V1_5_SIG;
 	req.saltlen = 0;
@@ -95,17 +99,18 @@ METHOD(private_key_t, sign, bool, private_fsm_private_key_t *this,
 
 	memcpy(req.buf, data.ptr, data.len);
 
-	DBG3(DBG_IKE, "data: %#b", req.buf, req.buflen);
-
+	DBG3(DBG_IKE, "%s: tre_ike_rsa_sign req %b", __FUNCTION__, &req,
+		sizeof(req));
 	ret = tre_ike_rsa_sign(&req, &rsp);
+	DBG3(DBG_IKE, "%s: tre_ike_rsa_sign rsp %b", __FUNCTION__, &rsp,
+		sizeof(rsp));
 
 	if (!ret && !rsp.result)
 	{
-		DBG3(DBG_IKE, "signature: %#b", rsp.buf, rsp.siglen);
 		*signature = chunk_alloc(rsp.siglen);
 		if (!signature->ptr)
 		{
-			DBG2(DBG_IKE, "%s: Could not allocate %u bytes for signature",
+			DBG2(DBG_IKE, "%s: Error: Failed to allocate %u bytes for signature",
 				__FUNCTION__, rsp.siglen);
 		}
 		else

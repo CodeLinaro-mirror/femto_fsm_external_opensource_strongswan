@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Tobias Brunner
  * Copyright (C) 2009 Martin Willi
  * Copyright (C) 2001-2008 Andreas Steffen
@@ -254,8 +254,8 @@ static bool is_ber_indefinite_length(chunk_t blob)
  */
 static int encrypt_key(chunk_t *blob, char *key_path)
 {
-	tre_ike_encrypt_key_cmd_t encr_key_req;
-	tre_ike_rsp_encrypt_key_cmd_t encr_key_rsp;
+	tre_ike_encrypt_key_cmd_t req;
+	tre_ike_rsp_encrypt_key_cmd_t rsp;
 	chunk_t n = chunk_empty;
 	chunk_t e = chunk_empty;
 	chunk_t d = chunk_empty;
@@ -273,7 +273,7 @@ static int encrypt_key(chunk_t *blob, char *key_path)
 
 	if (!blob)
 	{
-		DBG1(DBG_APP, "%s: Invalid private key", __FUNCTION__);
+		DBG1(DBG_APP, "%s: Error: Invalid private key", __FUNCTION__);
 		goto end;
 	}
 
@@ -284,14 +284,15 @@ static int encrypt_key(chunk_t *blob, char *key_path)
 		pem = TRUE;
 		if (pem_to_bin(&binkey, &pgp) != SUCCESS)
 		{
-			DBG1(DBG_APP, "%s: Could not convert PEM to binary", __FUNCTION__);
+			DBG1(DBG_APP, "%s: Error: Could not convert PEM to binary",
+				__FUNCTION__);
 			result = -1;
 			goto end;
 		}
 
 		if (pgp)
 		{
-			DBG1(DBG_APP, "%s: pgp is not supported", __FUNCTION__);
+			DBG1(DBG_APP, "%s: Error: pgp is not supported", __FUNCTION__);
 			result = -1;
 			goto end;
 		}
@@ -300,7 +301,7 @@ static int encrypt_key(chunk_t *blob, char *key_path)
 	parser = asn1_parser_create(priv_key_objs, binkey);
 	if (!parser)
 	{
-		DBG1(DBG_APP, "%s: Failed to create parser", __FUNCTION__);
+		DBG1(DBG_APP, "%s: Error: Failed to create parser", __FUNCTION__);
 		result = -1;
 		goto end;
 	}
@@ -314,7 +315,7 @@ static int encrypt_key(chunk_t *blob, char *key_path)
 			case PRIV_KEY_VERSION:
 				if (object.len > 0 && *object.ptr != 0)
 				{
-					DBG1(DBG_APP, "%s: Invalid private key version %#b!",
+					DBG1(DBG_APP, "%s: Error: Invalid private key version %#b!",
 						__FUNCTION__, object.ptr, object.len);
 					parser->destroy(parser);
 					goto end;
@@ -340,7 +341,7 @@ static int encrypt_key(chunk_t *blob, char *key_path)
 	parser->destroy(parser);
 	if (!success)
 	{
-		DBG1(DBG_APP, "%s: Could not parse private key!", __FUNCTION__);
+		DBG1(DBG_APP, "%s: Error: Could not parse private key!", __FUNCTION__);
 		result = -1;
 		goto end;
 	}
@@ -348,14 +349,14 @@ static int encrypt_key(chunk_t *blob, char *key_path)
 	if (!chunk_compare(n, chunk_empty) || !chunk_compare(e, chunk_empty) ||
 		!chunk_compare(d, chunk_empty))
 	{
-		DBG1(DBG_APP, "%s: Invalid private key!", __FUNCTION__);
+		DBG1(DBG_APP, "%s: Error: Invalid private key!", __FUNCTION__);
 		result = -1;
 		goto end;
 	}
 
 	/* No junk */
-	memset(&encr_key_req, 0, sizeof(tre_ike_encrypt_key_cmd_t));
-	memset(&encr_key_rsp, 0, sizeof(tre_ike_rsp_encrypt_key_cmd_t));
+	memset(&req, 0, sizeof(req));
+	memset(&rsp, 0, sizeof(rsp));
 
 	/* There may be an extra sign byte at the beginning of each field, we need
 	 * to discard those.
@@ -371,16 +372,17 @@ static int encrypt_key(chunk_t *blob, char *key_path)
 	/* Sanity check */
 	if (len > MOD_SZ)
 	{
-		DBG1(DBG_APP, "%s: modulus size %u greater than max size %u",
+		DBG1(DBG_APP, "%s: Error: modulus size %u greater than max size %u",
 			__FUNCTION__, len, MOD_SZ);
 		result = -1;
 		goto end;
 	}
 
 	/* Set up the modulus */
-	encr_key_req.keybuf.nbits = len * 8;
-	memcpy(encr_key_req.keybuf.n, &n.ptr[idx], len);
-	DBG4(DBG_APP, "hex str n: %#b", encr_key_req.keybuf.n, MOD_SZ);
+	req.keybuf.nbits = len * 8;
+	memcpy(req.keybuf.n, &n.ptr[idx], len);
+	DBG4(DBG_APP, "%s: hex str n: %#b", __FUNCTION__, req.keybuf.n,
+		MOD_SZ);
 
 	len = e.len;
 	idx = 0;
@@ -394,15 +396,17 @@ static int encrypt_key(chunk_t *blob, char *key_path)
 	/* Sanity check */
 	if (len > PUB_EXP_SZ)
 	{
-		DBG1(DBG_APP, "%s: public exponent size %u greater than max size %u",
+		DBG1(DBG_APP,
+			"%s: Error: public exponent size %u greater than max size %u",
 			__FUNCTION__, len, PUB_EXP_SZ);
 		result = -1;
 		goto end;
 	}
 
 	/* Set up the public exponent */
-	memcpy(encr_key_req.keybuf.e, &e.ptr[idx], len);
-	DBG4(DBG_APP, "hex str e: %#b", encr_key_req.keybuf.e, PUB_EXP_SZ);
+	memcpy(req.keybuf.e, &e.ptr[idx], len);
+	DBG4(DBG_APP, "%s: hex str e: %#b", __FUNCTION__, req.keybuf.e,
+		PUB_EXP_SZ);
 
 	len = d.len;
 	idx = 0;
@@ -416,41 +420,48 @@ static int encrypt_key(chunk_t *blob, char *key_path)
 	/* Sanity check */
 	if (len > PRIV_EXP_SZ)
 	{
-		DBG1(DBG_APP, "%s: private exponent size %u greater than max size %u",
+		DBG1(DBG_APP,
+			"%s: Error: private exponent size %u greater than max size %u",
 			__FUNCTION__, len, PRIV_EXP_SZ);
 		result = -1;
 		goto end;
 	}
 
 	/* Set up the private exponent */
-	memcpy(encr_key_req.keybuf.d, &d.ptr[idx], len);
-	DBG4(DBG_APP, "hex str d: %#b", encr_key_req.keybuf.d, PRIV_EXP_SZ);
+	memcpy(req.keybuf.d, &d.ptr[idx], len);
+	DBG4(DBG_APP, "hex str d: %#b", req.keybuf.d, PRIV_EXP_SZ);
 
 	/* Encrypt the private key */
-	result = tre_ike_encrypt_rsa_key(&encr_key_req, &encr_key_rsp);
+	DBG3(DBG_APP, "%s: tre_ike_encrypt_rsa_key req %b", __FUNCTION__, &req,
+		sizeof(req));
+	result = tre_ike_encrypt_rsa_key(&req, &rsp);
+	DBG3(DBG_APP, "%s: tre_ike_encrypt_rsa_key rsp %b", __FUNCTION__, &rsp,
+		sizeof(rsp));
 
-	if (result || encr_key_rsp.result)
+	if (result || rsp.result)
 	{
 		DBG1(DBG_APP,
-			"%s: tre_ike_encrypt_rsa_key failed returned %d result %d",
-			__FUNCTION__, result, encr_key_rsp.result);
+			"%s: Error: tre_ike_encrypt_rsa_key failed returned %d result %d",
+			__FUNCTION__, result, rsp.result);
 		result = -1;
 		goto end;
 	}
 
-	DBG4(DBG_APP, "encrypted key: %#b", encr_key_rsp.enc_keybuf, ENC_KEY_SZ);
+	DBG4(DBG_APP, "%s: encrypted key: %#b", __FUNCTION__,
+		rsp.enc_keybuf, ENC_KEY_SZ);
 
-	key.ptr = &encr_key_rsp.enc_keybuf[0];
+	key.ptr = &rsp.enc_keybuf[0];
 	key.len = ENC_KEY_SZ;
 
 	success = chunk_write(key, key_path, 0022, TRUE);
 	if (!success)
 	{
-		DBG1(DBG_APP, "Could not write encrypted key to %s", key_path);
+		DBG1(DBG_APP, "%s: Error: Could not write encrypted key to %s",
+			__FUNCTION__, key_path);
 		result = -1;
 		goto end;
 	}
-	DBG1(DBG_APP, "Encrypted key written to %s", key_path);
+	DBG1(DBG_APP, "%s: Encrypted key written to %s", __FUNCTION__, key_path);
 
 end:
 	if (pem)
@@ -505,7 +516,7 @@ static int encrypt(void)
 	chunk_ptr = chunk_map(file, FALSE);
 	if (!chunk_ptr)
 	{
-		DBG1(DBG_APP, "chunk_map failed: %s\n", strerror(errno));
+		DBG1(DBG_APP, "Error: chunk_map failed: %s\n", strerror(errno));
 		return -1;
 	}
 
@@ -513,7 +524,7 @@ static int encrypt(void)
 	if (encrypt_key(chunk_ptr, outfile))
 	{
 		result = -1;
-		DBG1(DBG_APP, "Could not encrypt %s", file);
+		DBG1(DBG_APP, "Error: Could not encrypt %s", file);
 	}
 	else
 	{

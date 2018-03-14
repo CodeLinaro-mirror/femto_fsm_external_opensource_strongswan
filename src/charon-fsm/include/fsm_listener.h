@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
  * Copyright (C) 2012 Reto Buerki
  * Copyright (C) 2012 Adrian-Ken Rueegsegger
  * Hochschule fuer Technik Rapperswil
@@ -41,9 +41,11 @@ struct fsm_listener_t
 /**
  * Create a fsm_listener instance.
  *
- * @param  ipsec	Pointer to FSM ipsec instance
+ * @param  ipsec        Pointer to FSM ipsec instance
+ * @param  secure_mode  TRUE if operating in secure mode
  * @return listener instance
  */
-fsm_listener_t *fsm_listener_create(fsm_kernel_ipsec_t *ipsec);
+fsm_listener_t *fsm_listener_create(fsm_kernel_ipsec_t *ipsec,
+	bool secure_mode);
 
 #endif /** FSM_LISTENER_H_ @}*/

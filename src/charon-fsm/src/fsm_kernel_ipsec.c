@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  * Copyright (C) 2006-2015 Tobias Brunner
  * Copyright (C) 2005-2009 Martin Willi
  * Copyright (C) 2008 Andreas Steffen
@@ -19,6 +19,7 @@
  * for more details.
  */
 
+#include <utils/utils/types.h>
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -45,6 +46,7 @@
 #include "fsm_netlink_ip.h"
 #include "fsm_listener.h"
 #include "fsm_utils.h"
+#include "fsm_keymat.h"
 
 #include <hydra.h>
 #include <utils/utils.h>
@@ -72,6 +74,11 @@ struct private_fsm_kernel_ipsec_t
 	 * Public part of the fsm_kernel_t object
 	 */
 	fsm_kernel_ipsec_t public;
+
+	/**
+	 * Secure mode
+	 */
+	bool secure_mode;
 
 	/**
 	 * Mutex to lock access to installed SAs
@@ -346,19 +353,9 @@ struct sa_t
 	u_int16_t enc_alg;
 
 	/**
-	 * Encryption key length
-	 */
-	u_int32_t enc_len;
-
-	/**
 	 * Integrity algorithm
 	 */
 	u_int16_t int_alg;
-
-	/**
-	 * Integrity key length
-	 */
-	u_int32_t int_len;
 
 	/**
 	 * DSCP mark value
@@ -369,6 +366,16 @@ struct sa_t
 	 * TRUE if Extended Sequence Numbers is enabled
 	 */
 	bool esn;
+
+	/**
+	 * Child SA ID
+	 */
+	u_int8_t child_id;
+
+	/**
+	 * Child SA ID valid
+	 */
+	bool valid;
 };
 
 /**
@@ -546,7 +553,7 @@ METHOD(kernel_ipsec_t, get_spi, status_t,
 		this->rng = lib->crypto->create_rng(lib->crypto, RNG_WEAK);
 		if (!this->rng)
 		{
-			DBG1(DBG_KNL, "%s: unable to create RNG", __FUNCTION__);
+			DBG1(DBG_KNL, "%s: Error: unable to create RNG", __FUNCTION__);
 			return FAILED;
 		}
 	}
@@ -647,7 +654,8 @@ static void schedule_expiration(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 
 	if (!sa || !sa->dst)
 	{
-		DBG2(DBG_KNL, "%s: Could not schedule rekey/expire timer, sa NULL",
+		DBG2(DBG_KNL,
+			"%s: Error: Could not schedule rekey/expire timer, sa NULL",
 			__FUNCTION__);
 		return;
 	}
@@ -668,14 +676,16 @@ static void schedule_expiration(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 
 	if (!entry)
 	{
-		DBG2(DBG_KNL, "%s: could not init entry, no expiration scehduled!",
+		DBG2(DBG_KNL,
+			"%s: Error: could not init entry, no expiration scehduled!",
 			__FUNCTION__);
 		return;
 	}
 
 	if (!entry->dst)
 	{
-		DBG2(DBG_KNL, "%s: could not init entry dst, no expiration scehduled!",
+		DBG2(DBG_KNL,
+			"%s: Error: could not init entry dst, no expiration scehduled!",
 			__FUNCTION__);
 		sa_expiry_cleanup(entry);
 		return;
@@ -703,7 +713,7 @@ static void schedule_expiration(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 
 	if (!job)
 	{
-		DBG2(DBG_KNL, "%s: could not init job, no expiration scheduled!",
+		DBG2(DBG_KNL, "%s: Error: could not init job, no expiration scheduled!",
 			__FUNCTION__);
 		sa_expiry_cleanup(entry);
 		return;
@@ -746,9 +756,9 @@ static status_t delete_route(iproute_t *route, mutex_t *mutex,
 	if (!addr.ptr || !addr.len)
 	{
 		DBG2(DBG_KNL,
-		"%s: Failed to remove route for dst_net %H prefix %u gw %H ifname %s "
-		"src_ip %H", __FUNCTION__, route->subnet, route->prefixlen, route->gw,
-		route->ifname, route->src_ip);
+			"%s: Error: Failed to remove route for dst_net %H prefix %u gw %H "
+			"ifname %s src_ip %H", __FUNCTION__, route->subnet,
+			route->prefixlen, route->gw, route->ifname, route->src_ip);
 		status = FAILED;
 		goto exitout;
 	}
@@ -758,9 +768,9 @@ static status_t delete_route(iproute_t *route, mutex_t *mutex,
 	if (status != SUCCESS)
 	{
 		DBG2(DBG_KNL,
-		"%s: Failed to remove route for dst_net %H prefix %u gw %H ifname %s "
-		"src_ip %H", __FUNCTION__, route->subnet, route->prefixlen, route->gw,
-		route->ifname, route->src_ip);
+			"%s: Error: Failed to remove route for dst_net %H prefix %u gw %H "
+			"ifname %s src_ip %H", __FUNCTION__, route->subnet,
+			route->prefixlen, route->gw, route->ifname, route->src_ip);
 		goto exitout;
 	}
 
@@ -800,7 +810,7 @@ void flush_rules(sa_t *sa, private_fsm_kernel_ipsec_t *this)
 	{
 		DBG2(DBG_KNL, "%s: %s %s rule for SPI 0x%08x src 0x%08x dst 0x%08x",
 			__FUNCTION__,
-			((status != SUCCESS) ? "Could not delete" : "Deleted"),
+			((status != SUCCESS) ? "Error: Could not delete" : "Deleted"),
 			(sa->decap ? "decap" : "encap"), sa->rule.spi, sa->rule.src[0],
 			sa->rule.dst[0]);
 	}
@@ -845,7 +855,7 @@ static status_t destroy_tunnel(private_fsm_kernel_ipsec_t *this,
 	status = this->nl_ipsec->destroy_tunnel(this->nl_ipsec, tunnel->ifname);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: Could not destroy tunnel %s for IKE SA %u",
+		DBG2(DBG_KNL, "%s: Error: Could not destroy tunnel %s for IKE SA %u",
 			__FUNCTION__, tunnel->ifname, tunnel->ike_sa_id);
 		return status;
 	}
@@ -877,6 +887,8 @@ static void delete_sa(sa_t *sa, private_fsm_kernel_ipsec_t *this)
 	}
 
 	sa->mutex->lock(sa->mutex);
+	sa->valid = FALSE;
+
 	/* Remove the sa from the list */
 	this->sas_mutex->lock(this->sas_mutex);
 	if (this->sas)
@@ -972,13 +984,13 @@ static status_t populate_addr_from_ts(u_int32_t family, traffic_selector_t *ts,
 	addr = ts->get_from_address(ts);
 	if (!addr.ptr || !addr.len)
 	{
-		DBG2(DBG_KNL, "%s: get_address failed for %R", __FUNCTION__, ts);
+		DBG2(DBG_KNL, "%s: Error: get_address failed for %R", __FUNCTION__, ts);
 		return FAILED;
 	}
 
 	if (addr.len != IP_ADDR_LEN(family))
 	{
-		DBG2(DBG_KNL, "%s: invalid address length %u, expected %u",
+		DBG2(DBG_KNL, "%s: Error: invalid address length %u, expected %u",
 			__FUNCTION__, addr.len, IP_ADDR_LEN(family));
 		return FAILED;
 	}
@@ -1024,13 +1036,13 @@ static status_t populate_addr_from_host(u_int32_t family, host_t *host,
 	addr = host->get_address(host);
 	if (!addr.ptr || !addr.len)
 	{
-		DBG2(DBG_KNL, "%s: get_address failed for %H", __FUNCTION__, host);
+		DBG2(DBG_KNL, "%s: Error: get_address failed for %H", __FUNCTION__, host);
 		return FAILED;
 	}
 
 	if (addr.len != IP_ADDR_LEN(family))
 	{
-		DBG2(DBG_KNL, "%s: invalid address length %u, expected %u",
+		DBG2(DBG_KNL, "%s: Error: invalid address length %u, expected %u",
 			__FUNCTION__, addr.len, IP_ADDR_LEN(family));
 		return FAILED;
 	}
@@ -1104,7 +1116,7 @@ static status_t add_crypto_rule(private_fsm_kernel_ipsec_t *this,
 
 	if (!this || !sa)
 	{
-		DBG2(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Invalid arguments", __FUNCTION__);
 		return INVALID_ARG;
 	}
 
@@ -1113,8 +1125,17 @@ static status_t add_crypto_rule(private_fsm_kernel_ipsec_t *this,
 		int_alg, int_key, sa->family, sa->nat, sa->decap, &sa->crypto_index);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: Could not add crypto session!", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Could not add crypto session!", __FUNCTION__);
 		return status;
+	}
+
+	if (this->secure_mode)
+	{
+		fsm_keymat_key_t *key = (fsm_keymat_key_t *)enc_key.ptr;
+
+		/* Retain the child SA ID for this SA */
+		sa->child_id = key->child_sa_id;
+		sa->valid = TRUE;
 	}
 
 	return status;
@@ -1130,7 +1151,7 @@ static status_t add_decap_sa(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 
 	if (!this || !sa || !this->nl_ipsec)
 	{
-		DBG2(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Invalid arguments", __FUNCTION__);
 		status = INVALID_ARG;
 		goto errorexit;
 	}
@@ -1148,7 +1169,7 @@ static status_t add_decap_sa(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 		use_pattern, sa->esn);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: Failed to add decap rule", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Failed to add decap rule", __FUNCTION__);
 	}
 
 errorexit:
@@ -1166,7 +1187,7 @@ static status_t add_ip_flow_rule(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 
 	if (!this || !sa || !this->nl_ipv4 || !this->nl_ipv6 || !sa->tunnel)
 	{
-		DBG2(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Invalid arguments", __FUNCTION__);
 		status = INVALID_ARG;
 		goto errorexit;
 	}
@@ -1175,7 +1196,8 @@ static status_t add_ip_flow_rule(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 
 	if (!flow)
 	{
-		DBG2(DBG_KNL, "%s: Could not allocate flow object", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Could not allocate flow object",
+			__FUNCTION__);
 		goto errorexit;
 	}
 
@@ -1195,7 +1217,7 @@ static status_t add_ip_flow_rule(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 		sa->dst, &ifname);
 	if (!valid || !ifname)
 	{
-		DBG2(DBG_KNL, "%s: get_interface failed for dst %H",
+		DBG2(DBG_KNL, "%s: Error: get_interface failed for dst %H",
 			__FUNCTION__, sa->dst);
 		goto errorexit;
 	}
@@ -1228,7 +1250,7 @@ static status_t add_ip_flow_rule(private_fsm_kernel_ipsec_t *this, sa_t *sa)
 		flow->tuple.proto, src_ifname, dst_ifname);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: Failed to add IP flow rule", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Failed to add IP flow rule", __FUNCTION__);
 		goto errorexit;
 	}
 
@@ -1258,7 +1280,7 @@ iproute_t *prepare_route(private_fsm_kernel_ipsec_t *this,
 
 	if (!this || !dst_ts)
 	{
-		DBG2(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Invalid arguments", __FUNCTION__);
 		return NULL;
 	}
 
@@ -1268,7 +1290,7 @@ iproute_t *prepare_route(private_fsm_kernel_ipsec_t *this,
 
 	if (!route)
 	{
-		DBG2(DBG_KNL, "%s: Could not alloc route", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Could not alloc route", __FUNCTION__);
 		status = FAILED;
 		goto exitfunc;
 	}
@@ -1277,7 +1299,7 @@ iproute_t *prepare_route(private_fsm_kernel_ipsec_t *this,
 	dst_ts->to_subnet(dst_ts, &route->subnet, &route->prefixlen);
 	if (!route->subnet)
 	{
-		DBG2(DBG_KNL, "%s: Could not get subnet from %R", __FUNCTION__,
+		DBG2(DBG_KNL, "%s: Error: Could not get subnet from %R", __FUNCTION__,
 			dst_ts);
 		status = FAILED;
 		goto exitfunc;
@@ -1291,7 +1313,7 @@ iproute_t *prepare_route(private_fsm_kernel_ipsec_t *this,
 		route->gw = host_create_any(route->subnet->get_family(route->subnet));
 		if (!route->gw)
 		{
-			DBG2(DBG_KNL, "%s: Could not create gateway", __FUNCTION__);
+			DBG2(DBG_KNL, "%s: Error: Could not create gateway", __FUNCTION__);
 			status = FAILED;
 			goto exitfunc;
 		}
@@ -1308,7 +1330,7 @@ iproute_t *prepare_route(private_fsm_kernel_ipsec_t *this,
 
 		if (!route->src_ip)
 		{
-			DBG2(DBG_KNL, "%s: Could not create src_ip", __FUNCTION__);
+			DBG2(DBG_KNL, "%s: Error: Could not create src_ip", __FUNCTION__);
 			status = FAILED;
 			goto exitfunc;
 		}
@@ -1325,7 +1347,8 @@ iproute_t *prepare_route(private_fsm_kernel_ipsec_t *this,
 				hydra->kernel_interface, route->subnet, route->prefixlen, NULL);
 			if (!route->gw)
 			{
-				DBG2(DBG_KNL, "%s: Could not create gateway", __FUNCTION__);
+				DBG2(DBG_KNL, "%s: Error: Could not create gateway",
+					__FUNCTION__);
 				status = FAILED;
 				goto exitfunc;
 			}
@@ -1335,7 +1358,8 @@ iproute_t *prepare_route(private_fsm_kernel_ipsec_t *this,
 				hydra->kernel_interface, route->gw, NULL);
 			if (!route->src_ip)
 			{
-				DBG2(DBG_KNL, "%s: Could not get source address for gw %H",
+				DBG2(DBG_KNL,
+					"%s: Error: Could not get source address for gw %H",
 					__FUNCTION__, route->gw);
 				status = FAILED;
 				goto exitfunc;
@@ -1368,7 +1392,7 @@ iproute_t *prepare_route(private_fsm_kernel_ipsec_t *this,
 					if (!route->src_ip)
 					{
 						DBG2(DBG_KNL,
-							"%s: Could not get src address for dst_ts %R",
+							"%s: Error: Could not get src address for dst_ts %R",
 							__FUNCTION__, dst_ts);
 						status = FAILED;
 						goto exitfunc;
@@ -1384,7 +1408,7 @@ iproute_t *prepare_route(private_fsm_kernel_ipsec_t *this,
 					if (!route->src_ip)
 					{
 						DBG2(DBG_KNL,
-							"%s: Could not get source address for gw %H",
+							"%s: Error: Could not get source address for gw %H",
 							__FUNCTION__, route->gw);
 						status = FAILED;
 						goto exitfunc;
@@ -1399,7 +1423,8 @@ iproute_t *prepare_route(private_fsm_kernel_ipsec_t *this,
 					host_create_any(route->subnet->get_family(route->subnet));
 				if (!route->gw)
 				{
-					DBG2(DBG_KNL, "%s: Could not create gateway", __FUNCTION__);
+					DBG2(DBG_KNL, "%s: Error: Could not create gateway",
+						__FUNCTION__);
 					status = FAILED;
 					goto exitfunc;
 				}
@@ -1415,7 +1440,8 @@ iproute_t *prepare_route(private_fsm_kernel_ipsec_t *this,
 			route->src_ip, &ifname);
 		if (!valid || !ifname)
 		{
-			DBG2(DBG_KNL, "%s: Could not get interface name for src_ip %H",
+			DBG2(DBG_KNL,
+				"%s: Error: Could not get interface name for src_ip %H",
 				__FUNCTION__, route->src_ip);
 			goto exitfunc;
 		}
@@ -1430,7 +1456,7 @@ iproute_t *prepare_route(private_fsm_kernel_ipsec_t *this,
 
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: copy_ifname failed", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: copy_ifname failed", __FUNCTION__);
 		goto exitfunc;
 	}
 
@@ -1467,7 +1493,7 @@ static status_t install_route(private_fsm_kernel_ipsec_t *this,
 	route = prepare_route(this, dst_ts, ifname, src_ip);
 	if (!route)
 	{
-		DBG2(DBG_KNL, "%s: Could not prepare route", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Could not prepare route", __FUNCTION__);
 		status = FAILED;
 		goto exitfunc;
 	}
@@ -1475,7 +1501,7 @@ static status_t install_route(private_fsm_kernel_ipsec_t *this,
 	addr = route->subnet->get_address(route->subnet);
 	if (!addr.ptr || !addr.len)
 	{
-		DBG2(DBG_KNL, "%s: Could not get address from subnet %H",
+		DBG2(DBG_KNL, "%s: Error: Could not get address from subnet %H",
 			__FUNCTION__, route->subnet);
 		status = FAILED;
 		goto exitfunc;
@@ -1519,7 +1545,8 @@ static status_t install_route(private_fsm_kernel_ipsec_t *this,
 				status = SUCCESS;
 				break;
 			default:
-				DBG2(DBG_KNL, "%s: unable to install source route for %H",
+				DBG2(DBG_KNL,
+					"%s: Error: unable to install source route for %H",
 					__FUNCTION__, route->subnet);
 				DESTROY_IF(route->subnet);
 				DESTROY_IF(route->gw);
@@ -1562,7 +1589,7 @@ static status_t add_route(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: Failed to install route for %R", __FUNCTION__,
+		DBG2(DBG_KNL, "%s: Error: Failed to install route for %R", __FUNCTION__,
 			dst_ts);
 	}
 
@@ -1591,7 +1618,7 @@ static status_t add_encap_flow(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 	proto = dst_ts->get_protocol(dst_ts);
 	if (!proto)
 	{
-		DBG1(DBG_KNL, "%s: Protocol %u not supported for encap flows",
+		DBG1(DBG_KNL, "%s: Error: Protocol %u not supported for encap flows",
 			__FUNCTION__, proto);
 		status = INVALID_ARG;
 		goto exitfunc;
@@ -1652,7 +1679,7 @@ static status_t add_encap_subnet(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 	dst_ts->to_subnet(dst_ts, &subnet, &mask);
 	if (!subnet)
 	{
-		DBG2(DBG_KNL, "%s: Could not get subnet from %R", __FUNCTION__,
+		DBG2(DBG_KNL, "%s: Error: Could not get subnet from %R", __FUNCTION__,
 			dst_ts);
 		status = FAILED;
 		goto exitfunc;
@@ -1661,8 +1688,8 @@ static status_t add_encap_subnet(private_fsm_kernel_ipsec_t *this, sa_t *sa,
 	netmask = host_create_netmask(family, mask);
 	if (!netmask)
 	{
-		DBG2(DBG_KNL, "%s: Could not create netmask from %R", __FUNCTION__,
-			dst_ts);
+		DBG2(DBG_KNL, "%s: Error: Could not create netmask from %R",
+			__FUNCTION__, dst_ts);
 		status = FAILED;
 		goto exitfunc;
 	}
@@ -1724,7 +1751,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 
 	if (!this || !src || !dst || !lifetime || !src_ts || !dst_ts)
 	{
-		DBG1(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
+		DBG1(DBG_KNL, "%s: Error: Invalid arguments", __FUNCTION__);
 		return INVALID_ARG;
 	}
 
@@ -1736,8 +1763,8 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 
 	if (mode != MODE_TUNNEL)
 	{
-		DBG1(DBG_KNL, "%s: Mode %N and protocol %u not supported", __FUNCTION__,
-			ipsec_mode_names, mode, protocol);
+		DBG1(DBG_KNL, "%s: Error: Mode %N and protocol %u not supported",
+			__FUNCTION__, ipsec_mode_names, mode, protocol);
 		return NOT_SUPPORTED;
 	}
 
@@ -1749,7 +1776,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 	this->tunnels_mutex->unlock(this->tunnels_mutex);
 	if ((status != SUCCESS) || !tunnel)
 	{
-		DBG1(DBG_KNL, "%s: Could not locate tunnel for lip %H rip %H",
+		DBG1(DBG_KNL, "%s: Error: Could not locate tunnel for lip %H rip %H",
 			__FUNCTION__, lip, rip);
 		return FAILED;
 	}
@@ -1784,23 +1811,23 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 		.mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
 		.replay_window = replay_window,
 		.enc_alg = enc_alg,
-		.enc_len = enc_key.len,
 		.int_alg = int_alg,
-		.int_len = int_key.len,
 		.mark = mark,
 		.esn = esn,
+		.child_id = 0,
+		.valid = FALSE,
 		);
 
 	if (!sa)
 	{
-		DBG1(DBG_KNL, "%s: Failed to allocate mem for SPI 0x%08x %s",
+		DBG1(DBG_KNL, "%s: Error: Failed to allocate mem for SPI 0x%08x %s",
 			__FUNCTION__, spi, IPSEC_DIR_STR(inbound));
 		return FAILED;
 	}
 
 	if (!sa->mutex || !sa->src || !sa->dst)
 	{
-		DBG1(DBG_KNL, "%s: Failed to allocate mem for SPI 0x%08x %s",
+		DBG1(DBG_KNL, "%s: Error: Failed to allocate mem for SPI 0x%08x %s",
 			__FUNCTION__, spi, IPSEC_DIR_STR(inbound));
 		status = FAILED;
 		goto errorexit;
@@ -1811,7 +1838,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 		(replay_window > (u_int32_t)MAX_REPLAY_WINDOW))
 	{
 		DBG1(DBG_KNL,
-			"%s: Invalid replay window value %u. Must be %u-%u.",
+			"%s: Error: Invalid replay window value %u. Must be %u-%u.",
 			__FUNCTION__, replay_window, MIN_REPLAY_WINDOW, MAX_REPLAY_WINDOW);
 		status = FAILED;
 		goto errorexit;
@@ -1829,7 +1856,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 	status = add_crypto_rule(this, sa, enc_alg, enc_key, int_alg, int_key);
 	if (status != SUCCESS)
 	{
-		DBG1(DBG_KNL, "%s: Crypto setup failed for SPI 0x%08x %s",
+		DBG1(DBG_KNL, "%s: Error: Crypto setup failed for SPI 0x%08x %s",
 			__FUNCTION__, spi, IPSEC_DIR_STR(inbound));
 		goto errorexit;
 	}
@@ -1854,7 +1881,8 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 		status = add_decap_sa(this, sa);
 		if (status != SUCCESS)
 		{
-			DBG1(DBG_KNL, "%s: Failed to add decap rule for SPI 0x%08x %s",
+			DBG1(DBG_KNL,
+				"%s: Error: Failed to add decap rule for SPI 0x%08x %s",
 				__FUNCTION__, spi, IPSEC_DIR_STR(inbound));
 			goto delsa;
 		}
@@ -1865,7 +1893,8 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 			status = add_ip_flow_rule(this, sa);
 			if (status != SUCCESS)
 			{
-				DBG1(DBG_KNL, "%s: Failed to add flow rule for ifname %s",
+				DBG1(DBG_KNL,
+					"%s: Error: Failed to add flow rule for ifname %s",
 					__FUNCTION__, tunnel->ifname);
 				goto delsa;
 			}
@@ -1891,7 +1920,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 				status = add_route(this, sa, ts);
 				if (status != SUCCESS)
 				{
-					DBG1(DBG_KNL, "%s: Failed to add route for %R",
+					DBG1(DBG_KNL, "%s: Error: Failed to add route for %R",
 						__FUNCTION__, ts);
 					enumerator->destroy(enumerator);
 					goto delsa;
@@ -2018,7 +2047,7 @@ static status_t delete_shunt(private_fsm_kernel_ipsec_t *this,
 	route = prepare_route(this, dst_ts, NULL, NULL);
 	if (!route)
 	{
-		DBG2(DBG_KNL, "%s: Could not prepare route for %R", __FUNCTION__,
+		DBG2(DBG_KNL, "%s: Error: Could not prepare route for %R", __FUNCTION__,
 			dst_ts);
 		status = FAILED;
 		goto exitfunc;
@@ -2036,8 +2065,8 @@ static status_t delete_shunt(private_fsm_kernel_ipsec_t *this,
 		status = delete_route(listroute, this->shunts_mutex, this->shunts);
 		if (status != SUCCESS)
 		{
-			DBG2(DBG_KNL, "%s: Failed to delete route for %R", __FUNCTION__,
-				dst_ts);
+			DBG2(DBG_KNL, "%s: Error: Failed to delete route for %R",
+				__FUNCTION__, dst_ts);
 			goto exitfunc;
 		}
 	}
@@ -2074,7 +2103,7 @@ static status_t add_shunt(private_fsm_kernel_ipsec_t *this,
 		NULL, NULL);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: Failed to install route for %R", __FUNCTION__,
+		DBG2(DBG_KNL, "%s: Error: Failed to install route for %R", __FUNCTION__,
 			dst_ts);
 	}
 
@@ -2230,7 +2259,8 @@ METHOD(kernel_ipsec_t, del_policy, status_t,
 	this->sas_mutex->unlock(this->sas_mutex);
 	if ((status != SUCCESS) || !currsa)
 	{
-		DBG2(DBG_KNL, "%s: Could not find SA for SPI 0x%08x src %H dst %H",
+		DBG2(DBG_KNL,
+			"%s: Error: Could not find SA for SPI 0x%08x src %H dst %H",
 			__FUNCTION__, spi, src, dst);
 		goto exitfunc;
 	}
@@ -2239,7 +2269,8 @@ METHOD(kernel_ipsec_t, del_policy, status_t,
 	dst_ts->to_subnet(dst_ts, &subnet, &mask);
 	if (!subnet)
 	{
-		DBG2(DBG_KNL, "%s: Could not get subnet from %R", __FUNCTION__, dst_ts);
+		DBG2(DBG_KNL, "%s: Error: Could not get subnet from %R", __FUNCTION__,
+			dst_ts);
 		status = FAILED;
 		goto exitfunc;
 	}
@@ -2256,8 +2287,8 @@ METHOD(kernel_ipsec_t, del_policy, status_t,
 		status = delete_route(route, this->routes_mutex, this->routes);
 		if (status != SUCCESS)
 		{
-			DBG2(DBG_KNL, "%s: Failed to delete route for %R", __FUNCTION__,
-				dst_ts);
+			DBG2(DBG_KNL, "%s: Error: Failed to delete route for %R",
+				__FUNCTION__, dst_ts);
 		}
 	}
 
@@ -2303,7 +2334,7 @@ METHOD(kernel_ipsec_t, enable_udp_decap, bool,
 
 	if (setsockopt(fd, IPPROTO_UDP, UDP_ENCAP, &type, sizeof(type)) < 0)
 	{
-		DBG1(DBG_KNL, "%s: unable to set UDP_ENCAP: %s",
+		DBG1(DBG_KNL, "%s: Error: unable to set UDP_ENCAP: %s",
 			__FUNCTION__, strerror(errno));
 		return FALSE;
 	}
@@ -2345,8 +2376,8 @@ static status_t update_tunnel(private_fsm_kernel_ipsec_t *this,
 					hydra->kernel_interface, vip, -1, tunnel->ifname);
 				if (status != SUCCESS)
 				{
-					DBG2(DBG_KNL, "%s: Could not add vip to %s", __FUNCTION__,
-						tunnel->ifname);
+					DBG2(DBG_KNL, "%s: Error: Could not add vip to %s",
+						__FUNCTION__, tunnel->ifname);
 					continue;
 				}
 
@@ -2376,13 +2407,13 @@ METHOD(fsm_kernel_ipsec_t, create_tunnel, status_t,
 
 	if (!this || !ike_sa || !net)
 	{
-		DBG2(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Invalid arguments", __FUNCTION__);
 		return INVALID_ARG;
 	}
 
 	if (!this->nl_ipsec || !this->tunnels || !this->tunnels_mutex)
 	{
-		DBG2(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Invalid arguments", __FUNCTION__);
 		return INVALID_ARG;
 	}
 
@@ -2414,13 +2445,14 @@ METHOD(fsm_kernel_ipsec_t, create_tunnel, status_t,
 
 	if (!tunnel)
 	{
-		DBG2(DBG_KNL, "%s: Could not allocate tunnel object", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Could not allocate tunnel object",
+			__FUNCTION__);
 		return FAILED;
 	}
 
 	if (!tunnel->mutex)
 	{
-		DBG2(DBG_KNL, "%s: Could not create tunnel mutex", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Could not create tunnel mutex", __FUNCTION__);
 		free(tunnel);
 		return FAILED;
 	}
@@ -2434,7 +2466,7 @@ METHOD(fsm_kernel_ipsec_t, create_tunnel, status_t,
 	status = this->nl_ipsec->create_tunnel(this->nl_ipsec, tunnel->ifname);
 	if (status != SUCCESS)
 	{
-		DBG1(DBG_KNL, "%s: Could not create tunnel", __FUNCTION__);
+		DBG1(DBG_KNL, "%s: Error: Could not create tunnel", __FUNCTION__);
 		DESTROY_IF(tunnel->mutex);
 		free(tunnel);
 		return status;
@@ -2458,7 +2490,7 @@ METHOD(fsm_kernel_ipsec_t, create_tunnel, status_t,
 	status = net->activate_iface(net, tunnel->ifname);
 	if (status != SUCCESS)
 	{
-		DBG1(DBG_KNL, "%s: Could not activate %s", __FUNCTION__,
+		DBG1(DBG_KNL, "%s: Error: Could not activate %s", __FUNCTION__,
 			tunnel->ifname);
 		destroy_tunnel(this, tunnel);
 		return status;
@@ -2481,8 +2513,8 @@ METHOD(fsm_kernel_ipsec_t, create_tunnel, status_t,
 					hydra->kernel_interface, vip, -1, tunnel->ifname);
 				if (status != SUCCESS)
 				{
-					DBG2(DBG_KNL, "%s: Could not add vip to %s", __FUNCTION__,
-						tunnel->ifname);
+					DBG2(DBG_KNL, "%s: Error: Could not add vip to %s",
+						__FUNCTION__, tunnel->ifname);
 					break;
 				}
 				DBG2(DBG_KNL, "%s: Added vip to %s", __FUNCTION__,
@@ -2513,13 +2545,13 @@ METHOD(fsm_kernel_ipsec_t, migrate_tunnel, status_t,
 
 	if (!this)
 	{
-		DBG2(DBG_KNL, "%s: Invalid argument", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Invalid argument", __FUNCTION__);
 		return INVALID_ARG;
 	}
 
 	if (!this->tunnels)
 	{
-		DBG2(DBG_KNL, "%s: Invalid argument", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Invalid argument", __FUNCTION__);
 		return INVALID_ARG;
 	}
 
@@ -2530,8 +2562,8 @@ METHOD(fsm_kernel_ipsec_t, migrate_tunnel, status_t,
 	this->tunnels_mutex->unlock(this->tunnels_mutex);
 	if ((status != SUCCESS) || !tunnel)
 	{
-		DBG2(DBG_KNL, "%s: Could not find tunnel for IKE SA %u", __FUNCTION__,
-			old_ike_sa_id);
+		DBG2(DBG_KNL, "%s: Error: Could not find tunnel for IKE SA %u",
+			__FUNCTION__, old_ike_sa_id);
 		return FAILED;
 	}
 
@@ -2555,13 +2587,13 @@ METHOD(fsm_kernel_ipsec_t, delete_tunnel, status_t,
 	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec", __FUNCTION__);
 	if (!this)
 	{
-		DBG2(DBG_KNL, "%s: Invalid argument", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Invalid argument", __FUNCTION__);
 		return INVALID_ARG;
 	}
 
 	if (!this->nl_ipsec || !this->tunnels || !this->tunnels_mutex)
 	{
-		DBG2(DBG_KNL, "%s: Invalid argument", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Invalid argument", __FUNCTION__);
 		return INVALID_ARG;
 	}
 
@@ -2577,7 +2609,7 @@ METHOD(fsm_kernel_ipsec_t, delete_tunnel, status_t,
 			(void **)&tunnel, &ike_sa_id);
 		if ((status != SUCCESS) || !tunnel)
 		{
-			DBG2(DBG_KNL, "%s: Could not find tunnel for IKE SA %u",
+			DBG2(DBG_KNL, "%s: Error: Could not find tunnel for IKE SA %u",
 				__FUNCTION__, ike_sa_id);
 		}
 		else
@@ -2626,14 +2658,55 @@ METHOD(fsm_kernel_ipsec_t, get_tunnel_iface, status_t,
 	this->tunnels_mutex->unlock(this->tunnels_mutex);
 	if ((status != SUCCESS) || !tunnel)
 	{
-		DBG3(DBG_KNL, "%s: Could not find tunnel for IKE SA %u", __FUNCTION__,
-			ike_sa_id);
+		DBG3(DBG_KNL, "%s: Could not find tunnel for IKE SA %u",
+			__FUNCTION__, ike_sa_id);
 		return FAILED;
 	}
 
 	tunnel->mutex->lock(tunnel->mutex);
 	*iface = &tunnel->ifname[0];
 	tunnel->mutex->unlock(tunnel->mutex);
+
+	return status;
+}
+
+METHOD(fsm_kernel_ipsec_t, get_child_sa_id, status_t,
+	private_fsm_kernel_ipsec_t *this, u_int32_t spi, bool inbound,
+	u_int8_t *child_sa_id)
+{
+	status_t status = SUCCESS;
+	sa_t *sa = NULL;
+
+	DBG2(DBG_KNL, "Entering %s in fsm_kernel_ipsec", __FUNCTION__);
+
+	if (!this || !child_sa_id)
+	{
+		DBG2(DBG_KNL, "%s: Error: Invalid arguments!", __FUNCTION__);
+		return INVALID_ARG;
+	}
+
+	/* Check SA to be sure it still exists */
+	this->sas_mutex->lock(this->sas_mutex);
+	status = this->sas->find_first(this->sas,
+		(linked_list_match_t)match_sa_by_spi_inbound,
+		(void **)&sa, &spi, &inbound);
+	this->sas_mutex->unlock(this->sas_mutex);
+	if ((status != SUCCESS) || !sa || !sa->mutex)
+	{
+		return FAILED;
+	}
+
+	sa->mutex->lock(sa->mutex);
+	if (sa->valid)
+	{
+		*child_sa_id = sa->child_id;
+	}
+	else
+	{
+		DBG2(DBG_KNL, "%s: Error: Invalid child id!", __FUNCTION__);
+		status = FAILED;
+	}
+	sa->mutex->unlock(sa->mutex);
 
 	return status;
 }
@@ -2670,10 +2743,7 @@ METHOD(kernel_ipsec_t, destroy, void, private_fsm_kernel_ipsec_t *this)
 	free(this);
 }
 
-/*
- * Described in header.
- */
-fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
+static fsm_kernel_ipsec_t *fsm_kernel_ipsec_create_default(bool secure_mode)
 {
 	private_fsm_kernel_ipsec_t *this = NULL;
 
@@ -2709,7 +2779,9 @@ fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
 			.migrate_tunnel = _migrate_tunnel,
 			.delete_tunnel = _delete_tunnel,
 			.get_tunnel_iface = _get_tunnel_iface,
+			.get_child_sa_id = _get_child_sa_id,
 		},
+		.secure_mode = secure_mode,
 		.tunnels = linked_list_create(),
 		.tunnels_mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
 		.sas = linked_list_create(),
@@ -2724,7 +2796,7 @@ fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
 
 	if (!this)
 	{
-		DBG1(DBG_KNL, "%s: Failed to allocate memory!", __FUNCTION__);
+		DBG1(DBG_KNL, "%s: Error: Failed to allocate memory!", __FUNCTION__);
 		goto exitcleanup;
 	}
 
@@ -2733,15 +2805,16 @@ fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
 		!this->shunts || !this->shunts_mutex)
 	{
 		DBG1(DBG_KNL,
-			"%s: Failed to allocate memory for components!", __FUNCTION__);
+			"%s: Error: Failed to allocate memory for components!",
+			__FUNCTION__);
 		goto exitcleanup;
 	}
 
 	/* Create FSM netlink crypto interface */
-	this->nl_crypto = fsm_netlink_crypto_create();
+	this->nl_crypto = fsm_netlink_crypto_create(secure_mode);
 	if (!this->nl_crypto)
 	{
-		DBG1(DBG_KNL, "%s: Failed to allocate nl_crypto!", __FUNCTION__);
+		DBG1(DBG_KNL, "%s: Error: Failed to allocate nl_crypto!", __FUNCTION__);
 		goto exitcleanup;
 	}
 
@@ -2749,7 +2822,7 @@ fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
 	this->nl_ipsec = fsm_netlink_ipsec_create();
 	if (!this->nl_ipsec)
 	{
-		DBG1(DBG_KNL, "%s: Failed to allocate nl_ipsec!", __FUNCTION__);
+		DBG1(DBG_KNL, "%s: Error: Failed to allocate nl_ipsec!", __FUNCTION__);
 		goto exitcleanup;
 	}
 
@@ -2757,7 +2830,7 @@ fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
 	this->nl_ipv4 = fsm_netlink_ip_create(AF_INET);
 	if (!this->nl_ipv4)
 	{
-		DBG1(DBG_KNL, "%s: Could not allocate nl_ipv4!", __FUNCTION__);
+		DBG1(DBG_KNL, "%s: Error: Failed to allocate nl_ipv4!", __FUNCTION__);
 		goto exitcleanup;
 	}
 
@@ -2765,15 +2838,16 @@ fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
 	this->nl_ipv6 = fsm_netlink_ip_create(AF_INET6);
 	if (!this->nl_ipv6)
 	{
-		DBG1(DBG_KNL, "%s: Failed to allocate nl_ipv6!", __FUNCTION__);
+		DBG1(DBG_KNL, "%s: Error: Failed to allocate nl_ipv6!", __FUNCTION__);
 		goto exitcleanup;
 	}
 
 	/* register bus listener */
-	this->listener = fsm_listener_create(&this->public);
+	this->listener = fsm_listener_create(&this->public, secure_mode);
 	if (!this->listener)
 	{
-		DBG1(DBG_KNL, "%s: Failed to allocate fsm_listener!", __FUNCTION__);
+		DBG1(DBG_KNL, "%s: Error: Failed to allocate fsm_listener!",
+			__FUNCTION__);
 		goto exitcleanup;
 	}
 	charon->bus->add_listener(charon->bus, &this->listener->listener);
@@ -2787,3 +2861,20 @@ exitcleanup:
 	}
 	return NULL;
 }
+
+/*
+ * Described in header.
+ */
+fsm_kernel_ipsec_t *fsm_kernel_ipsec_create(void)
+{
+	return fsm_kernel_ipsec_create_default(FALSE);
+}
+
+/*
+ * Described in header.
+ */
+fsm_kernel_ipsec_t *fsm_kernel_ipsec_create_secure(void)
+{
+	return fsm_kernel_ipsec_create_default(TRUE);
+}
+

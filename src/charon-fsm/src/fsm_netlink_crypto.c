@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -49,6 +49,7 @@
 #include <nss_nlcrypto_if.h>
 #include "fsm_netlink_sock.h"
 #include "fsm_netlink_crypto.h"
+#include "fsm_keymat.h"
 
 typedef struct private_fsm_netlink_crypto_t private_fsm_netlink_crypto_t;
 
@@ -62,6 +63,11 @@ struct private_fsm_netlink_crypto_t
 	 * Public part of FSM netlink crypto object
 	 */
 	fsm_netlink_crypto_t public;
+
+	/**
+	 * Secure mode
+	 */
+	bool secure_mode;
 
 	/**
 	 * FSM netlink socket context (crypto family)
@@ -266,7 +272,7 @@ static status_t crypto_send_msg(private_fsm_netlink_crypto_t *this,
 
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: failed to send message", __FUNCTION__);
 		return status;
 	}
 
@@ -292,7 +298,7 @@ CALLBACK(crypto_err, void, private_fsm_netlink_crypto_t *this, void *msg)
 
 	if (!msg || !this)
 	{
-		DBG2(DBG_KNL, "%s: invalid input", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: invalid input", __FUNCTION__);
 		return;
 	}
 
@@ -334,7 +340,7 @@ CALLBACK(crypto_resp, void, private_fsm_netlink_crypto_t *this,
 
 	if (!data || !cm || !this)
 	{
-		DBG2(DBG_KNL, "%s: invalid input", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: invalid input", __FUNCTION__);
 		return;
 	}
 
@@ -359,7 +365,7 @@ CALLBACK(crypto_resp, void, private_fsm_netlink_crypto_t *this,
 			break;
 
 		default:
-			DBG2(DBG_KNL, "%s: Unexpected response for cmd %u",
+			DBG2(DBG_KNL, "%s: Error: Unexpected response for cmd %u",
 				__FUNCTION__, cmd);
 			break;
 	}
@@ -388,7 +394,7 @@ METHOD(fsm_netlink_crypto_t, del_session, status_t,
 	status = crypto_send_msg(this, &rule, NSS_NLCRYPTO_CMD_DESTROY_SESSION);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: failed to send message", __FUNCTION__);
 		this->mutex->unlock(this->mutex);
 		return status;
 	}
@@ -409,19 +415,21 @@ METHOD(fsm_netlink_crypto_t, add_session, status_t,
 	bool found = FALSE;
 	algorithm_t *cipher_alg = NULL;
 	algorithm_t *auth_alg = NULL;
+	uint16_t cmd = NSS_NLCRYPTO_CMD_CREATE_SESSION;
 
 	DBG2(DBG_KNL, "Entering %s in fsm_netlink_crypto", __FUNCTION__);
 
 	/* Sanity checks */
 	if (!this || !sess_idx_ptr)
 	{
-		DBG2(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Invalid arguments", __FUNCTION__);
 		return INVALID_ARG;
 	}
 
 	if ((family != AF_INET) && (family != AF_INET6))
 	{
-		DBG2(DBG_KNL, "%s: IP family %u not supported", __FUNCTION__, family);
+		DBG2(DBG_KNL, "%s: Error: IP family %u not supported", __FUNCTION__,
+			family);
 		return NOT_SUPPORTED;
 	}
 
@@ -430,7 +438,7 @@ METHOD(fsm_netlink_crypto_t, add_session, status_t,
 	found = crypto_alg_lookup(ENCRYPTION_ALGORITHM, enc_alg, &cipher_alg);
 	if (!found || !cipher_alg)
 	{
-		DBG2(DBG_KNL, "%s: encryption algorithm %N not supported",
+		DBG2(DBG_KNL, "%s: Error: encryption algorithm %N not supported",
 			__FUNCTION__, encryption_algorithm_names, enc_alg);
 		return NOT_SUPPORTED;
 	}
@@ -440,43 +448,82 @@ METHOD(fsm_netlink_crypto_t, add_session, status_t,
 	found = crypto_alg_lookup(INTEGRITY_ALGORITHM, int_alg, &auth_alg);
 	if (!found || !auth_alg)
 	{
-		DBG2(DBG_KNL, "%s: integrity algorithm %N not supported", __FUNCTION__,
-			integrity_algorithm_names, int_alg);
+		DBG2(DBG_KNL, "%s: Error: integrity algorithm %N not supported",
+			__FUNCTION__, integrity_algorithm_names, int_alg);
 		return NOT_SUPPORTED;
 	}
 	crypto_create->auth.algo = auth_alg->nss;
 
 	/* Validate key lengths */
-	if (enc_key.len > NSS_NLCRYPTO_MAX_KEYLEN ||
-		int_key.len > NSS_NLCRYPTO_MAX_KEYLEN)
+	if (this->secure_mode)
 	{
-		DBG2(DBG_KNL, "%s: Invalid key length(s)", __FUNCTION__);
-		return FAILED;
-	}
+		fsm_keymat_key_t *encr_key = NULL;
+		fsm_keymat_key_t *integ_key = NULL;
 
-	/* Set the keys only if not using NULL encryption */
-	if ((enc_key.len != 0) && (enc_key.ptr != NULL))
+		if (enc_key.len != sizeof(fsm_keymat_key_t) ||
+			int_key.len != sizeof(fsm_keymat_key_t))
+		{
+			DBG2(DBG_KNL, "%s: Error: Invalid key length(s)", __FUNCTION__);
+			return FAILED;
+		}
+
+		encr_key = (fsm_keymat_key_t *)enc_key.ptr;
+		integ_key = (fsm_keymat_key_t *)int_key.ptr;
+
+		if (encr_key && encr_key->len)
+		{
+			crypto_create->cipher.key_len = encr_key->len;
+			crypto_create->cipher.index = encr_key->index;
+		}
+
+		if (integ_key && integ_key->len)
+		{
+			crypto_create->auth.key_len = integ_key->len;
+			crypto_create->auth.index = integ_key->index;
+		}
+
+		DBG2(DBG_KNL, "%s: enc_alg %N enc_key %B \nint_alg %N int_key %B",
+			__FUNCTION__,
+			encryption_algorithm_names, enc_alg, &enc_key,
+			integrity_algorithm_names, int_alg, &int_key);
+
+		/* Set the proper command */
+		cmd = NSS_NLCRYPTO_CMD_CREATE_SESSION_NOKEY;
+	}
+	else
 	{
-		crypto_create->cipher.key_len = enc_key.len;
-		memcpy(&crypto_create->cipher_key[0], enc_key.ptr, enc_key.len);
-	}
+		if (enc_key.len > NSS_NLCRYPTO_MAX_KEYLEN ||
+			int_key.len > NSS_NLCRYPTO_MAX_KEYLEN)
+		{
+			DBG2(DBG_KNL, "%s: Error: Invalid key length(s)", __FUNCTION__);
+			return FAILED;
+		}
 
-	if ((int_key.len != 0) && (int_key.ptr != NULL))
-	{
-		crypto_create->auth.key_len = int_key.len;
-		memcpy(&crypto_create->auth_key[0], int_key.ptr, int_key.len);
-	}
+		/* Set the keys only if not using NULL encryption */
+		if ((enc_key.len != 0) && (enc_key.ptr != NULL))
+		{
+			crypto_create->cipher.key_len = enc_key.len;
+			memcpy(&crypto_create->cipher_key[0], enc_key.ptr, enc_key.len);
+		}
 
-	DBG2(DBG_KNL, "%s: crypto cipher %N len %u auth %N len %u", __FUNCTION__,
-		encryption_algorithm_names, enc_alg, enc_key.len,
-		integrity_algorithm_names, int_alg, int_key.len);
+		if ((int_key.len != 0) && (int_key.ptr != NULL))
+		{
+			crypto_create->auth.key_len = int_key.len;
+			memcpy(&crypto_create->auth_key[0], int_key.ptr, int_key.len);
+		}
+
+		DBG2(DBG_KNL, "%s: crypto cipher %N len %u auth %N len %u", __FUNCTION__,
+			encryption_algorithm_names, enc_alg, enc_key.len,
+			integrity_algorithm_names, int_alg, int_key.len);
+	}
 
 	this->mutex->lock(this->mutex);
+
 	/* Send the message */
-	status = crypto_send_msg(this, &rule, NSS_NLCRYPTO_CMD_CREATE_SESSION);
+	status = crypto_send_msg(this, &rule, cmd);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: failed to send message", __FUNCTION__);
 		this->mutex->unlock(this->mutex);
 		return status;
 	}
@@ -486,9 +533,11 @@ METHOD(fsm_netlink_crypto_t, add_session, status_t,
 	{
 		*sess_idx_ptr = this->last_sess_idx;
 		DBG2(DBG_KNL, "%s: idx %u assigned", __FUNCTION__, *sess_idx_ptr);
-	} else
+	}
+	else
 	{
-		DBG2(DBG_KNL, "%s: Timed out waiting for response", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Timed out waiting for response",
+			__FUNCTION__);
 		this->mutex->unlock(this->mutex);
 		return FAILED;
 	}
@@ -532,7 +581,7 @@ METHOD(fsm_netlink_crypto_t, add_session, status_t,
 	status = crypto_send_msg(this, &rule, NSS_NLCRYPTO_CMD_UPDATE_SESSION);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: failed to send message", __FUNCTION__);
 		del_session(this, *sess_idx_ptr);
 		this->mutex->unlock(this->mutex);
 		return status;
@@ -566,7 +615,7 @@ METHOD(fsm_netlink_crypto_t, destroy, void, private_fsm_netlink_crypto_t *this)
 /*
  * Described in header.
  */
-fsm_netlink_crypto_t *fsm_netlink_crypto_create(void)
+fsm_netlink_crypto_t *fsm_netlink_crypto_create(bool secure_mode)
 {
 	private_fsm_netlink_crypto_t *this;
 
@@ -579,6 +628,7 @@ fsm_netlink_crypto_t *fsm_netlink_crypto_create(void)
 			.del_session = _del_session,
 			.destroy = _destroy,
 		},
+		.secure_mode = secure_mode,
 		.mutex = mutex_create(MUTEX_TYPE_RECURSIVE),
 		.sem = semaphore_create(0),
 		.err_sem = semaphore_create(0),
@@ -586,6 +636,7 @@ fsm_netlink_crypto_t *fsm_netlink_crypto_create(void)
 
 	if (!this || !this->mutex || !this->sem || !this->err_sem)
 	{
+		DBG1(DBG_KNL, "%s: Error: could not create all objects!", __FUNCTION__);
 		goto exitout;
 	}
 
@@ -594,6 +645,8 @@ fsm_netlink_crypto_t *fsm_netlink_crypto_create(void)
 
 	if (this->nl_sock == NULL)
 	{
+		DBG1(DBG_KNL, "%s: Error: failed to create netlink socket!",
+			__FUNCTION__);
 		goto exitout;
 	}
 
@@ -601,6 +654,8 @@ fsm_netlink_crypto_t *fsm_netlink_crypto_create(void)
 	this->thread = thread_create((thread_main_t)crypto_receiver, this);
 	if (this->thread == NULL)
 	{
+		DBG1(DBG_KNL, "%s: Error: failed to create crypto_receiver thread!",
+			__FUNCTION__);
 		goto exitout;
 	}
 

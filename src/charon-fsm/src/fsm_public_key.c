@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
  * Copyright (C) 2012-2013 Reto Buerki
  * Copyright (C) 2012-2013 Adrian-Ken Rueegsegger
  * Hochschule fuer Technik Rapperswil
@@ -139,8 +139,8 @@ static status_t get_hash_idx_from_scheme(signature_scheme_t scheme,
 METHOD(public_key_t, verify, bool, private_fsm_public_key_t *this,
 	signature_scheme_t scheme, chunk_t data, chunk_t signature)
 {
-	tre_ike_verify_sign_cmd_t ike_verify_req;
-	tre_ike_rsp_verify_sign_cmd_t ike_verify_rsp;
+	tre_ike_verify_sign_cmd_t req;
+	tre_ike_rsp_verify_sign_cmd_t rsp;
 	int32_t result = -1;
 	bool success = FALSE;
 	size_t len = 0;
@@ -152,46 +152,46 @@ METHOD(public_key_t, verify, bool, private_fsm_public_key_t *this,
 	/* Sanity checks */
 	if (!this || !data.ptr || !data.len || !signature.ptr || !signature.len)
 	{
-		DBG2(DBG_IKE, "%s: Invalid arguments!", __FUNCTION__);
+		DBG2(DBG_IKE, "%s: Error: Invalid arguments!", __FUNCTION__);
 		return FALSE;
 	}
 
 	if (!scheme_supported(scheme))
 	{
-		DBG2(DBG_IKE, "%s: Invalid scheme %N",
+		DBG2(DBG_IKE, "%s: Error: Invalid scheme %N",
 			__FUNCTION__, signature_scheme_names, scheme);
 		return FALSE;
 	}
 
 	if ((data.len > MAX_DATA_SIZE_BYTES) || (signature.len > SIG_SZ))
 	{
-		DBG2(DBG_IKE, "%s: data.len=%u, signature.len=%u",
+		DBG2(DBG_IKE, "%s: Error: data.len=%u, signature.len=%u",
 			__FUNCTION__, data.len, signature.len);
 		return FALSE;
 	}
 
 	/* No junk */
-	memset(&ike_verify_req, 0, sizeof(tre_ike_verify_sign_cmd_t));
-	memset(&ike_verify_rsp, 0, sizeof(tre_ike_rsp_verify_sign_cmd_t));
+	memset(&req, 0, sizeof(req));
+	memset(&rsp, 0, sizeof(rsp));
 
-	status = get_hash_idx_from_scheme(scheme, &ike_verify_req.hashidx);
+	status = get_hash_idx_from_scheme(scheme, &req.hashidx);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_IKE, "%s: Could not get hash index for scheme %N",
+		DBG2(DBG_IKE, "%s: Error: Could not get hash index for scheme %N",
 			__FUNCTION__, signature_scheme_names, scheme);
 		return FALSE;
 	}
-	DBG2(DBG_IKE, "%s: hashidx %u", __FUNCTION__, ike_verify_req.hashidx);
+	DBG2(DBG_IKE, "%s: hashidx %u", __FUNCTION__, req.hashidx);
 
-	ike_verify_req.padding_info.padType = CE_RSA_PAD_PKCS1_V1_5_SIG;
-	ike_verify_req.padding_info.labelLen = 0;
-	ike_verify_req.data_len = data.len;
-	ike_verify_req.signature_len = signature.len;
+	req.padding_info.padType = CE_RSA_PAD_PKCS1_V1_5_SIG;
+	req.padding_info.labelLen = 0;
+	req.data_len = data.len;
+	req.signature_len = signature.len;
 
-	memcpy(&ike_verify_req.data, data.ptr, data.len);
+	memcpy(&req.data, data.ptr, data.len);
 	DBG3(DBG_IKE, "%s data: %b", __FUNCTION__, data.ptr, data.len);
 
-	memcpy(&ike_verify_req.signature, signature.ptr, signature.len);
+	memcpy(&req.signature, signature.ptr, signature.len);
 	DBG3(DBG_IKE, "%s signature: %b",
 		__FUNCTION__, signature.ptr, signature.len);
 
@@ -216,9 +216,9 @@ METHOD(public_key_t, verify, bool, private_fsm_public_key_t *this,
 	}
 
 	/* Set up the modulus */
-	ike_verify_req.public_key.nbits = len * 8;
-	memcpy(ike_verify_req.public_key.n, &this->n.ptr[idx], len);
-	DBG4(DBG_IKE, "n: %#b", ike_verify_req.public_key.n, MOD_SZ);
+	req.public_key.nbits = len * 8;
+	memcpy(req.public_key.n, &this->n.ptr[idx], len);
+	DBG4(DBG_IKE, "n: %#b", req.public_key.n, MOD_SZ);
 
 	len = this->e.len;
 	idx = 0;
@@ -238,13 +238,17 @@ METHOD(public_key_t, verify, bool, private_fsm_public_key_t *this,
 	}
 
 	/* Set up the public exponent */
-	ike_verify_req.pubkey_len = len;
-	memcpy(ike_verify_req.public_key.e, &this->e.ptr[idx], len);
-	DBG4(DBG_IKE, "e: %#b", ike_verify_req.public_key.e, PUB_EXP_SZ);
+	req.pubkey_len = len;
+	memcpy(req.public_key.e, &this->e.ptr[idx], len);
+	DBG4(DBG_IKE, "e: %#b", req.public_key.e, PUB_EXP_SZ);
 
-	result = tre_ike_verify_rsa_signature(&ike_verify_req, &ike_verify_rsp);
+	DBG3(DBG_IKE, "%s: tre_ike_verify_rsa_signature req %b", __FUNCTION__, &req,
+		sizeof(req));
+	result = tre_ike_verify_rsa_signature(&req, &rsp);
+	DBG3(DBG_IKE, "%s: tre_ike_verify_rsa_signature rsp %b", __FUNCTION__, &rsp,
+		sizeof(rsp));
 
-	if (!result && !ike_verify_rsp.result)
+	if (!result && !rsp.result)
 	{
 		success = TRUE;
 	}

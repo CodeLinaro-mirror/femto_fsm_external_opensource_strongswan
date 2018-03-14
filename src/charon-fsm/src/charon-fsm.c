@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
  * Copyright (C) 2012 Tobias Brunner
  * Copyright (C) 2012 Reto Buerki
  * Copyright (C) 2012 Adrian-Ken Rueegsegger
@@ -35,15 +35,23 @@
 #include <utils/backtrace.h>
 #include <utils/debug.h>
 #include <threading/thread.h>
+#include <sa/keymat.h>
 #include "fsm_cred.h"
 #include "fsm_public_key.h"
 #include "fsm_kernel_ipsec.h"
 #include "fsm_kernel_net.h"
+#include "fsm_keymat.h"
 
 /**
  * PID file, in which charon-fsm stores its process id
  */
 #define PID_FILE IPSEC_PIDDIR "/charon-fsm.pid"
+
+/**
+ * Kernel sysfs file which indicates whether we are in secure
+ * mode or not.
+ */
+#define SECURE_MODE_FILE "/sys/kernel/debug/qca-nss-crypto/secure_mode"
 
 /**
  * Default user and group
@@ -177,12 +185,46 @@ static void segv_handler(int signal)
 	abort();
 }
 
+static bool get_secure_mode(void)
+{
+	bool result = FALSE;
+	struct stat stb;
+	FILE *secure_mode_file = NULL;
+
+	/* No junk */
+	memset(&stb, 0, sizeof(stb));
+
+	/* Check if the file exists before reading it. */
+	if (stat(SECURE_MODE_FILE, &stb) == 0)
+	{
+		secure_mode_file = fopen(SECURE_MODE_FILE, "r");
+		if (secure_mode_file)
+		{
+			char buf[2];
+
+			memset(buf, 0, sizeof(buf));
+
+			if (fread(buf, 1, sizeof(buf), secure_mode_file))
+			{
+				buf[sizeof(buf) - 1] = '\0';
+				result = (buf[0] == 'Y') ? TRUE : FALSE;
+			}
+			fclose(secure_mode_file);
+		}
+	}
+
+	return result;
+}
+
 /**
  * Check/create PID file, return TRUE if already running
  */
 static bool check_pidfile(void)
 {
 	struct stat stb;
+
+	/* No junk */
+	memset(&stb, 0, sizeof(stb));
 
 	if (stat(PID_FILE, &stb) == 0)
 	{
@@ -281,6 +323,7 @@ int main(int argc, char *argv[])
 	struct utsname utsname;
 	fsm_cred_t *creds = NULL;
 	char *dmn_name;
+	bool secure_mode = TRUE;
 
 	if (argc > 0 && strlen(argv[0]) > 0)
 	{
@@ -399,21 +442,48 @@ int main(int argc, char *argv[])
 		"Starting IKE %s daemon (strongSwan "VERSION", %s %s, %s)", dmn_name,
 		utsname.sysname, utsname.release, utsname.machine);
 
-	/* register FSM-specific plugins */
-	static plugin_feature_t features[] =
-	{
-		PLUGIN_REGISTER(PUBKEY, fsm_public_key_load, TRUE),
-			PLUGIN_PROVIDE(PUBKEY, KEY_RSA),
-			PLUGIN_PROVIDE(PUBKEY_VERIFY, SIGN_RSA_EMSA_PKCS1_SHA1),
-			PLUGIN_PROVIDE(PUBKEY_VERIFY, SIGN_RSA_EMSA_PKCS1_SHA256),
-		PLUGIN_CALLBACK(kernel_ipsec_register, fsm_kernel_ipsec_create),
-			PLUGIN_PROVIDE(CUSTOM, "kernel-ipsec"),
-		PLUGIN_CALLBACK(kernel_net_register, fsm_kernel_net_create),
-			PLUGIN_PROVIDE(CUSTOM, "kernel-net"),
-	};
+	/* Determine whether we are running in secure mode */
+	secure_mode = get_secure_mode();
 
-	lib->plugins->add_static_features(lib->plugins, "fsm-backend", features,
-		countof(features), TRUE, NULL, NULL);
+	/* Register FSM-specific plugins */
+	if (secure_mode)
+	{
+		static plugin_feature_t secure_features[] =
+		{
+			PLUGIN_REGISTER(PUBKEY, fsm_public_key_load, TRUE),
+				PLUGIN_PROVIDE(PUBKEY, KEY_RSA),
+				PLUGIN_PROVIDE(PUBKEY_VERIFY, SIGN_RSA_EMSA_PKCS1_SHA256),
+			PLUGIN_CALLBACK(kernel_ipsec_register,
+				fsm_kernel_ipsec_create_secure),
+				PLUGIN_PROVIDE(CUSTOM, "kernel-ipsec"),
+			PLUGIN_CALLBACK(kernel_net_register, fsm_kernel_net_create),
+				PLUGIN_PROVIDE(CUSTOM, "kernel-net"),
+		};
+
+		lib->plugins->add_static_features(lib->plugins, "fsm-backend-secure",
+			secure_features, countof(secure_features), TRUE, NULL, NULL);
+
+		/* register FSM keymat */
+		keymat_register_constructor(IKEV2,
+			(keymat_constructor_t)fsm_keymat_create);
+	}
+	else
+	{
+		static plugin_feature_t features[] =
+		{
+			PLUGIN_REGISTER(PUBKEY, fsm_public_key_load, TRUE),
+				PLUGIN_PROVIDE(PUBKEY, KEY_RSA),
+				PLUGIN_PROVIDE(PUBKEY_VERIFY, SIGN_RSA_EMSA_PKCS1_SHA1),
+				PLUGIN_PROVIDE(PUBKEY_VERIFY, SIGN_RSA_EMSA_PKCS1_SHA256),
+			PLUGIN_CALLBACK(kernel_ipsec_register, fsm_kernel_ipsec_create),
+				PLUGIN_PROVIDE(CUSTOM, "kernel-ipsec"),
+			PLUGIN_CALLBACK(kernel_net_register, fsm_kernel_net_create),
+				PLUGIN_PROVIDE(CUSTOM, "kernel-net"),
+		};
+
+		lib->plugins->add_static_features(lib->plugins, "fsm-backend", features,
+			countof(features), TRUE, NULL, NULL);
+	}
 
 	/* register FSM credential set */
 	creds = fsm_cred_create();

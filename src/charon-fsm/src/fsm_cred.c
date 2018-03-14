@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
  * Copyright (C) 2012 Reto Buerki
  * Copyright (C) 2012 Adrian-Ken Rueegsegger
  * Hochschule fuer Technik Rapperswil
@@ -60,6 +60,18 @@ METHOD(credential_set_t, create_private_enumerator, enumerator_t *,
 
 	DBG2(DBG_IKE, "Entering %s in fsm_cred", __FUNCTION__);
 
+	if (!this)
+	{
+		DBG1(DBG_IKE, "%s: Error: Invalid arguments!", __FUNCTION__);
+		return NULL;
+	}
+
+	if (!this->known_keys || !this->creds || !this->lock)
+	{
+		DBG1(DBG_IKE, "%s: Error: Invalid arguments!", __FUNCTION__);
+		return NULL;
+	}
+
 	if (!id)
 	{
 		return this->known_keys->create_enumerator(this->known_keys);
@@ -77,7 +89,7 @@ METHOD(credential_set_t, create_private_enumerator, enumerator_t *,
 			__FUNCTION__, clone);
 		if (!key)
 		{
-			DBG2(DBG_IKE, "%s: unable to create private key for id '%Y'",
+			DBG2(DBG_IKE, "%s: Error: unable to create private key for id '%Y'",
 				__FUNCTION__, clone);
 			this->lock->unlock(this->lock);
 			return NULL;
@@ -94,18 +106,30 @@ METHOD(credential_set_t, create_private_enumerator, enumerator_t *,
 METHOD(fsm_cred_t, destroy, void, private_fsm_cred_t *this)
 {
 	enumerator_t *enumerator;
-	identification_t *entry;
+	identification_t *entry = NULL;
 
-	enumerator = this->known_keys->create_enumerator(this->known_keys);
-	while (enumerator->enumerate(enumerator, NULL, &entry))
+	if (!this)
 	{
-		entry->destroy(entry);
+		DBG1(DBG_IKE, "%s: Error: Invalid arguments!", __FUNCTION__);
+		return;
 	}
-	enumerator->destroy(enumerator);
-	this->known_keys->destroy(this->known_keys);
 
-	this->creds->destroy(this->creds);
-	this->lock->destroy(this->lock);
+	if (this->known_keys != NULL)
+	{
+		enumerator = this->known_keys->create_enumerator(this->known_keys);
+		if (enumerator)
+		{
+			while (enumerator->enumerate(enumerator, NULL, &entry))
+			{
+				DESTROY_IF(entry);
+			}
+			enumerator->destroy(enumerator);
+		}
+		this->known_keys->destroy(this->known_keys);
+	}
+
+	DESTROY_IF(this->creds);
+	DESTROY_IF(this->lock);
 	free(this);
 }
 
@@ -130,7 +154,7 @@ static bool equals(identification_t *a, identification_t *b)
  */
 fsm_cred_t *fsm_cred_create(void)
 {
-	private_fsm_cred_t *this;
+	private_fsm_cred_t *this = NULL;
 
 	INIT(this,
 		.public =
@@ -150,6 +174,18 @@ fsm_cred_t *fsm_cred_create(void)
 		.known_keys = hashtable_create((hashtable_hash_t)hash,
 			(hashtable_equals_t)equals, 4),
 		);
+
+	if (!this)
+	{
+		DBG1(DBG_IKE, "%s: Error: Failed to create this!", __FUNCTION__);
+		return NULL;
+	}
+
+	if (!this->creds || !this->lock || !this->known_keys)
+	{
+		DBG1(DBG_IKE, "%s: Error: Failed to allocate objects!", __FUNCTION__);
+		return NULL;
+	}
 
 	return &this->public;
 }

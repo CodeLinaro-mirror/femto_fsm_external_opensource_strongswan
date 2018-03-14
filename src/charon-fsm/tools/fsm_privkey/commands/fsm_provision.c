@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
  * Copyright (C) 2008-2009 Martin Willi
  * Copyright (C) 2008 Tobias Brunner
  * Copyright (C) 2000-2008 Andreas Steffen
@@ -31,43 +31,45 @@
  */
 static int prov_key(chunk_t *blob)
 {
-	tre_ike_prov_key_cmd_t prov_key_req;
-	tre_ike_rsp_prov_key_cmd_t prov_key_rsp;
+	tre_ike_prov_key_cmd_t req;
+	tre_ike_rsp_prov_key_cmd_t rsp;
 	int result = 0;
 
-	prov_key_req.key_in_fuse = (blob) ? FALSE : TRUE;
+	/* No junk */
+	memset(&req, 0, sizeof(req));
+	memset(&rsp, 0, sizeof(rsp));
+
+	req.key_in_fuse = (blob) ? FALSE : TRUE;
 
 	if (blob)
 	{
 		if (!blob->ptr || !blob->len)
 		{
-			DBG1(DBG_APP, "%s: Invalid blob!", __FUNCTION__);
+			DBG1(DBG_APP, "%s: Error: Invalid blob!", __FUNCTION__);
 			return -1;
 		}
 
-		if (blob->len != sizeof(prov_key_req.keybuf))
+		if (blob->len != sizeof(req.keybuf))
 		{
-			DBG1(DBG_APP, "%s: Invalid key size %u, expected %u", __FUNCTION__,
-				blob->len, sizeof(prov_key_req.keybuf));
+			DBG1(DBG_APP, "%s: Error: Invalid key size %u, expected %u",
+				__FUNCTION__, blob->len, sizeof(req.keybuf));
 			return -1;
 		}
 
 		/* Copy the encrypted private key to the request buffer */
-		memcpy((void *)&prov_key_req.keybuf[0], blob->ptr,
-			blob->len);
-	}
-	else
-	{
-		/* Zero out the key buffer */
-		memset(prov_key_req.keybuf, 0, sizeof(prov_key_req.keybuf));
+		memcpy((void *)&req.keybuf[0], blob->ptr, blob->len);
 	}
 
-	result = tre_ike_prov_rsa_key(&prov_key_req, &prov_key_rsp);
+	DBG3(DBG_APP, "%s: tre_ike_prov_rsa_key req %b", __FUNCTION__, &req,
+		sizeof(req));
+	result = tre_ike_prov_rsa_key(&req, &rsp);
+	DBG3(DBG_APP, "%s: tre_ike_prov_rsa_key rsp %b", __FUNCTION__, &rsp,
+		sizeof(rsp));
 
-	if (result || prov_key_rsp.result)
+	if (result || rsp.result)
 	{
-		DBG1(DBG_APP, "%s: tre_ike_prov_rsa_key failed returned %d result %d",
-			__FUNCTION__, result, prov_key_rsp.result);
+		DBG1(DBG_APP, "%s: Error: tre_ike_prov_rsa_key returned %d result %d",
+			__FUNCTION__, result, rsp.result);
 		result = -1;
 	}
 

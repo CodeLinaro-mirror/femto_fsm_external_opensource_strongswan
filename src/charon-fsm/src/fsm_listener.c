@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Tobias Brunner
  * Copyright (C) 2008 Martin Willi
  * Copyrigth (C) 2012 Reto Buerki
@@ -34,6 +34,7 @@
 #include "fsm_listener.h"
 #include "fsm_kernel_ipsec.h"
 #include "fsm_updown_handler.h"
+#include "fsm_keymat.h"
 
 typedef struct private_fsm_listener_t private_fsm_listener_t;
 typedef struct cache_entry_t cache_entry_t;
@@ -62,6 +63,11 @@ struct private_fsm_listener_t
 	 * DNS attribute handler
 	 */
 	fsm_updown_handler_t *handler;
+
+	/**
+	 * Secure mode
+	 */
+	bool secure_mode;
 };
 
 /**
@@ -476,6 +482,30 @@ METHOD(listener_t, child_updown, bool, private_fsm_listener_t *this,
 		enumerator->destroy(enumerator);
 	}
 
+	/* Remove the CHILD SA from secure world if this is going down */
+	if (!up && this->secure_mode)
+	{
+		u_int32_t spi = child_sa->get_spi(child_sa, TRUE);
+		u_int8_t child_sa_id = 0;
+
+		/* Get the CHILD SA ID */
+		status = this->ipsec->get_child_sa_id(this->ipsec, spi, TRUE,
+			&child_sa_id);
+		if (status == SUCCESS)
+		{
+			fsm_keymat_t *keymat = (fsm_keymat_t *)ike_sa->get_keymat(ike_sa);
+			bool res = TRUE;
+
+			if (keymat)
+			{
+				/* Delete the child SA */
+				res = keymat->del_child_sa(keymat, child_sa_id);
+				DBG2(DBG_CHD, "%s: %s CHILD SA ID %u", __FUNCTION__,
+					((res) ? "Deleted" : "Error: Could not delete"), child_sa_id);
+			}
+		}
+	}
+
 	/* NOTE: TRUE does not indicate success here. Rather, it indicates that
 	 * this handler should remain registered to be called again at a future
 	 * point.
@@ -546,7 +576,7 @@ METHOD(listener_t, handle_vips, bool, private_fsm_listener_t *this,
 		status = this->ipsec->create_tunnel(this->ipsec, ike_sa);
 		if (status != SUCCESS)
 		{
-			DBG2(DBG_IKE, "%s: Could not create tunnel", __FUNCTION__);
+			DBG2(DBG_IKE, "%s: Error: Could not create tunnel", __FUNCTION__);
 		}
 	}
 	else
@@ -558,7 +588,56 @@ METHOD(listener_t, handle_vips, bool, private_fsm_listener_t *this,
 		status = this->ipsec->delete_tunnel(this->ipsec, ike_sa_id);
 		if (status != SUCCESS)
 		{
-			DBG2(DBG_IKE, "%s: Could not delete tunnel", __FUNCTION__);
+			DBG2(DBG_IKE, "%s: Error: Could not delete tunnel", __FUNCTION__);
+		}
+	}
+
+	/* NOTE: TRUE does not indicate success here. Rather, it indicates that
+	 * this handler should remain registered to be called again at a future
+	 * point.
+	 */
+	return TRUE;
+}
+
+METHOD(listener_t, child_rekey, bool, private_fsm_listener_t *this,
+	ike_sa_t *ike_sa, child_sa_t *old, child_sa_t *new)
+{
+	if (!this || !ike_sa || !old || !new)
+	{
+		/* NOTE: TRUE does not indicate success here. Rather, it indicates that
+		 * this handler should remain registered to be called again at a future
+		 * point.
+		 */
+		return TRUE;
+	}
+
+	DBG2(DBG_IKE, "Entering %s in fsm_listener: IKE_SA %u CHILD_SA %u=>%u",
+		__FUNCTION__, ike_sa->get_unique_id(ike_sa), old->get_unique_id(old),
+		new->get_unique_id(new));
+
+	/* Remove the old CHILD SA from secure world */
+	if (this->secure_mode)
+	{
+		status_t status = SUCCESS;
+		u_int32_t spi = old->get_spi(old, TRUE);
+		u_int8_t child_sa_id = 0;
+
+		/* Get the CHILD SA ID */
+		status = this->ipsec->get_child_sa_id(this->ipsec, spi, TRUE,
+			&child_sa_id);
+		if (status == SUCCESS)
+		{
+			fsm_keymat_t *keymat = (fsm_keymat_t *)ike_sa->get_keymat(ike_sa);
+			bool res = TRUE;
+
+			if (keymat)
+			{
+				/* Delete the child SA */
+				res = keymat->del_child_sa(keymat, child_sa_id);
+				DBG2(DBG_CHD, "%s: %s CHILD SA ID %u", __FUNCTION__,
+					((res) ? "Deleted" : "Error: Could not delete"),
+					child_sa_id);
+			}
 		}
 	}
 
@@ -601,7 +680,7 @@ METHOD(listener_t, ike_rekey, bool, private_fsm_listener_t *this,
 		new_ike_sa_id);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_IKE, "%s: Failed to migrate tunnel for IKE SA %u to %u",
+		DBG2(DBG_IKE, "%s: Error: Failed to migrate tunnel for IKE SA %u to %u",
 			__FUNCTION__, old_ike_sa_id, new_ike_sa_id);
 	}
 
@@ -645,7 +724,7 @@ METHOD(listener_t, ike_reestablish_pre, bool, private_fsm_listener_t *this,
 		new_ike_sa_id);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_IKE, "%s: Failed to migrate tunnel for IKE SA %u to %u",
+		DBG2(DBG_IKE, "%s: Error: Failed to migrate tunnel for IKE SA %u to %u",
 			__FUNCTION__, old_ike_sa_id, new_ike_sa_id);
 	}
 
@@ -679,7 +758,7 @@ METHOD(fsm_listener_t, destroy, void, private_fsm_listener_t *this)
 /**
  * See header
  */
-fsm_listener_t *fsm_listener_create(fsm_kernel_ipsec_t *ipsec)
+fsm_listener_t *fsm_listener_create(fsm_kernel_ipsec_t *ipsec, bool secure_mode)
 {
 	private_fsm_listener_t *this = NULL;
 
@@ -698,6 +777,7 @@ fsm_listener_t *fsm_listener_create(fsm_kernel_ipsec_t *ipsec)
 				.authorize = _authorize,
 				.handle_vips = _handle_vips,
 				.ike_rekey = _ike_rekey,
+				.child_rekey = _child_rekey,
 				.ike_reestablish_pre = _ike_reestablish_pre,
 				.child_updown = _child_updown,
 			},
@@ -706,10 +786,12 @@ fsm_listener_t *fsm_listener_create(fsm_kernel_ipsec_t *ipsec)
 		.ipsec = ipsec,
 		.handler = NULL,
 		.iface_cache = linked_list_create(),
+		.secure_mode = secure_mode,
 		);
 
 	if (!this || !this->iface_cache)
 	{
+		DBG1(DBG_IKE, "%s: Error: Failed to create this!", __FUNCTION__);
 		return NULL;
 	}
 

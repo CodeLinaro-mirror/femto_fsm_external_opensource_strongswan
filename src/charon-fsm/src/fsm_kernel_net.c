@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
  * Copyright (C) 2008-2014 Tobias Brunner
  * Copyright (C) 2005-2008 Martin Willi
  * Hochschule fuer Technik Rapperswil
@@ -1063,14 +1063,14 @@ static void process_link(private_fsm_kernel_net_t *this, struct nlmsghdr *hdr,
 					);
 				if (!entry)
 				{
-					DBG2(DBG_KNL, "%s: Could not allocate entry!",
+					DBG2(DBG_KNL, "%s: Error: Could not allocate entry!",
 						__FUNCTION__);
 					return;
 				}
 				if (!entry->addrs)
 				{
 					free(entry);
-					DBG2(DBG_KNL, "%s: Could not allocate entry!",
+					DBG2(DBG_KNL, "%s: Error: Could not allocate entry!",
 						__FUNCTION__);
 					return;
 				}
@@ -1123,7 +1123,7 @@ static void process_link(private_fsm_kernel_net_t *this, struct nlmsghdr *hdr,
 			break;
 		}
 		default:
-			DBG2(DBG_KNL, "%s: Unhandled type %u", __FUNCTION__,
+			DBG2(DBG_KNL, "%s: Error: Unhandled type %u", __FUNCTION__,
 				hdr->nlmsg_type);
 			break;
 	}
@@ -1186,8 +1186,8 @@ static void process_addr(private_fsm_kernel_net_t *this,
 	if (host == NULL)
 	{
 		/* bad family? */
-		DBG2(DBG_KNL, "%s: Could not create host for family %u", __FUNCTION__,
-			msg->ifa_family);
+		DBG2(DBG_KNL, "%s: Error: Could not create host for family %u",
+			__FUNCTION__, msg->ifa_family);
 		return;
 	}
 
@@ -1255,12 +1255,14 @@ static void process_addr(private_fsm_kernel_net_t *this,
 					);
 				if (!addr)
 				{
-					DBG2(DBG_KNL, "%s: Could not allocate addr!", __FUNCTION__);
+					DBG2(DBG_KNL, "%s: Error: Could not allocate addr!",
+						__FUNCTION__);
 					return;
 				}
 				if (!addr->ip)
 				{
-					DBG2(DBG_KNL, "%s: Could not allocate addr!", __FUNCTION__);
+					DBG2(DBG_KNL, "%s: Error: Could not allocate addr!",
+						__FUNCTION__);
 					free(addr);
 					return;
 				}
@@ -1287,7 +1289,7 @@ static void process_addr(private_fsm_kernel_net_t *this,
 	}
 	else
 	{
-		DBG2(DBG_KNL, "%s: Could not find iface %u", __FUNCTION__,
+		DBG2(DBG_KNL, "%s: Error: Could not find iface %u", __FUNCTION__,
 			msg->ifa_index);
 	}
 	this->lock->unlock(this->lock);
@@ -1409,7 +1411,8 @@ static bool receive_events(private_fsm_kernel_net_t *this, int fd,
 				/* no data ready, select again */
 				return TRUE;
 			default:
-				DBG1(DBG_KNL, "%s: unable to receive from rt event socket",
+				DBG1(DBG_KNL,
+					"%s: Error: unable to receive from rt event socket",
 					__FUNCTION__);
 				sleep(1);
 				return TRUE;
@@ -1628,8 +1631,8 @@ static int get_interface_index(private_fsm_kernel_net_t *this, char *name)
 
 	if (ifindex <= 0)
 	{
-		DBG1(DBG_KNL, "%s: unable to get interface index for %s", __FUNCTION__,
-			name);
+		DBG1(DBG_KNL, "%s: Error: unable to get interface index for %s",
+			__FUNCTION__, name);
 	}
 	return ifindex;
 }
@@ -1755,7 +1758,7 @@ static rt_entry_t *parse_route(struct nlmsghdr *hdr, rt_entry_t *route)
 
 		if (!route)
 		{
-			DBG2(DBG_KNL, "%s: Could not allocate route!", __FUNCTION__);
+			DBG2(DBG_KNL, "%s: Error: Could not allocate route!", __FUNCTION__);
 			return NULL;
 		}
 	}
@@ -1866,8 +1869,8 @@ static host_t *get_route(private_fsm_kernel_net_t *this, host_t *dest,
 
 	if (this->socket->send(this->socket, hdr, &out, &len) != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: getting %s to reach %H/%d failed", __FUNCTION__,
-			(nexthop ? "nexthop" : "address"), dest, prefix);
+		DBG2(DBG_KNL, "%s: Error: getting %s to reach %H/%d failed",
+			__FUNCTION__, (nexthop ? "nexthop" : "address"), dest, prefix);
 		return NULL;
 	}
 	routes = linked_list_create();
@@ -2075,7 +2078,7 @@ static host_t *get_route(private_fsm_kernel_net_t *this, host_t *dest,
 	}
 	else if (!recursion)
 	{
-		DBG2(DBG_KNL, "%s: no %s found to reach %H/%d", __FUNCTION__,
+		DBG2(DBG_KNL, "%s: Error: no %s found to reach %H/%d", __FUNCTION__,
 			(nexthop ? "nexthop" : "address"), dest, prefix);
 	}
 	return addr;
@@ -2233,7 +2236,7 @@ METHOD(kernel_net_t, add_ip, status_t, private_fsm_kernel_net_t *this,
 
 	if (!this || !virtual_ip || !iface_name)
 	{
-		DBG2(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Invalid arguments", __FUNCTION__);
 		return INVALID_ARG;
 	}
 
@@ -2322,13 +2325,13 @@ METHOD(kernel_net_t, add_ip, status_t, private_fsm_kernel_net_t *this,
 
 		if (!addr)
 		{
-			DBG2(DBG_KNL, "%s: Could not allocate addr!", __FUNCTION__);
+			DBG2(DBG_KNL, "%s: Error: Could not allocate addr!", __FUNCTION__);
 			return FAILED;
 		}
 
 		if (!addr->ip)
 		{
-			DBG2(DBG_KNL, "%s: Could not allocate ip!", __FUNCTION__);
+			DBG2(DBG_KNL, "%s: Error: Could not allocate ip!", __FUNCTION__);
 			free(addr);
 			return FAILED;
 		}
@@ -2366,7 +2369,8 @@ METHOD(kernel_net_t, add_ip, status_t, private_fsm_kernel_net_t *this,
 		return FAILED;
 	}
 	this->lock->unlock(this->lock);
-	DBG1(DBG_KNL, "%s: no interface available, unable to install virtual IP %H",
+	DBG1(DBG_KNL,
+		"%s: Error: no interface available, unable to install virtual IP %H",
 		__FUNCTION__, virtual_ip);
 	return FAILED;
 }
@@ -2408,7 +2412,7 @@ METHOD(kernel_net_t, del_ip, status_t, private_fsm_kernel_net_t *this,
 			this->lock->unlock(this->lock);
 			return SUCCESS;
 		}
-		DBG2(DBG_KNL, "%s: virtual IP %H not cached, unable to delete",
+		DBG2(DBG_KNL, "%s: Warning: virtual IP %H not cached, unable to delete",
 			__FUNCTION__, virtual_ip);
 		this->lock->unlock(this->lock);
 		return FAILED;
@@ -2672,7 +2676,7 @@ static status_t manage_rule(private_fsm_kernel_net_t *this, int nlmsg_type,
 		}
 #else
 		DBG1(DBG_KNL,
-			"%s: setting firewall mark on routing rule is not supported",
+			"%s: Error: setting firewall mark on routing rule is not supported",
 			__FUNCTION__);
 #endif
 	}
@@ -2796,13 +2800,13 @@ METHOD(fsm_kernel_net_t, activate_iface, status_t,
 
 	if (!this)
 	{
-		DBG2(DBG_KNL, "%s: Invalid argument", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Invalid argument", __FUNCTION__);
 		return INVALID_ARG;
 	}
 
 	if (!this->socket)
 	{
-		DBG2(DBG_KNL, "%s: socket is NULL!", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: socket is NULL!", __FUNCTION__);
 		return INVALID_ARG;
 	}
 	memset(&request, 0, sizeof(request));
@@ -2815,7 +2819,7 @@ METHOD(fsm_kernel_net_t, activate_iface, status_t,
 	if (((uint8_t *)in + sizeof(request)) <=
 		((uint8_t *)rtmsg + sizeof(struct rtgenmsg)))
 	{
-		DBG2(DBG_KNL, "%s: Message too large!", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Message too large!", __FUNCTION__);
 		return FAILED;
 	}
 
@@ -2831,7 +2835,7 @@ METHOD(fsm_kernel_net_t, activate_iface, status_t,
 
 	if (!out || !len)
 	{
-		DBG2(DBG_KNL, "%s: Invalid response was received", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Invalid response was received", __FUNCTION__);
 		return FAILED;
 	}
 
@@ -2888,7 +2892,8 @@ METHOD(fsm_kernel_net_t, activate_iface, status_t,
 					if (((uint8_t *)in + sizeof(request)) <=
 						((uint8_t *)info + sizeof(struct ifinfomsg)))
 					{
-						DBG2(DBG_KNL, "%s: Message too large!", __FUNCTION__);
+						DBG2(DBG_KNL, "%s: Error: Message too large!",
+							__FUNCTION__);
 						status = FAILED;
 						break;
 					}
@@ -3002,7 +3007,8 @@ fsm_kernel_net_t *fsm_kernel_net_create(void)
 
 	if (!kernel_net)
 	{
-		DBG1(DBG_KNL, "%s: Failed to allocate kernel_net!", __FUNCTION__);
+		DBG1(DBG_KNL, "%s: Error: Failed to allocate kernel_net!",
+			__FUNCTION__);
 		return NULL;
 	}
 
@@ -3011,7 +3017,7 @@ fsm_kernel_net_t *fsm_kernel_net_create(void)
 		!kernel_net->routes_lock || !kernel_net->net_changes_lock ||
 		!kernel_net->ifaces || !kernel_net->condvar || !kernel_net->roam_lock)
 	{
-		DBG1(DBG_KNL, "%s: Failed to allocate kernel_net objects!",
+		DBG1(DBG_KNL, "%s: Error: Failed to allocate kernel_net objects!",
 			__FUNCTION__);
 		destroy(kernel_net);
 		return NULL;
@@ -3063,7 +3069,8 @@ fsm_kernel_net_t *fsm_kernel_net_create(void)
 		kernel_net->socket_events = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
 		if (kernel_net->socket_events < 0)
 		{
-			DBG1(DBG_KNL, "%s: unable to create RT event socket", __FUNCTION__);
+			DBG1(DBG_KNL, "%s: Error: unable to create RT event socket",
+				__FUNCTION__);
 			destroy(kernel_net);
 			return NULL;
 		}
@@ -3073,7 +3080,8 @@ fsm_kernel_net_t *fsm_kernel_net_create(void)
 		if (bind(kernel_net->socket_events, (struct sockaddr *)&addr,
 				sizeof(addr)))
 		{
-			DBG1(DBG_KNL, "%s: unable to bind RT event socket", __FUNCTION__);
+			DBG1(DBG_KNL, "%s: Error: unable to bind RT event socket",
+				__FUNCTION__);
 			destroy(kernel_net);
 			return NULL;
 		}
@@ -3084,7 +3092,7 @@ fsm_kernel_net_t *fsm_kernel_net_create(void)
 
 	if (init_address_list(kernel_net) != SUCCESS)
 	{
-		DBG1(DBG_KNL, "%s: unable to get interface list", __FUNCTION__);
+		DBG1(DBG_KNL, "%s: Error: unable to get interface list", __FUNCTION__);
 		destroy(kernel_net);
 		return NULL;
 	}
@@ -3095,14 +3103,14 @@ fsm_kernel_net_t *fsm_kernel_net_create(void)
 				kernel_net->routing_table,
 				kernel_net->routing_table_prio) != SUCCESS)
 		{
-			DBG1(DBG_KNL, "%s: unable to create IPv4 routing table rule",
+			DBG1(DBG_KNL, "%s: Error: unable to create IPv4 routing table rule",
 				__FUNCTION__);
 		}
 		if (manage_rule(kernel_net, RTM_NEWRULE, AF_INET6,
 				kernel_net->routing_table,
 				kernel_net->routing_table_prio) != SUCCESS)
 		{
-			DBG1(DBG_KNL, "%s: unable to create IPv6 routing table rule",
+			DBG1(DBG_KNL, "%s: Error: unable to create IPv6 routing table rule",
 				__FUNCTION__);
 		}
 	}

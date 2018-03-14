@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -129,13 +129,13 @@ static status_t ip_send_msg(private_fsm_netlink_ip_t *this, void *rulePtr,
 
 	if (!this || !rulePtr)
 	{
-		DBG2(DBG_KNL, "%s: Invalid arguments", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Invalid arguments", __FUNCTION__);
 		return INVALID_ARG;
 	}
 
 	if (!this->nl_sock || !this->err_sem)
 	{
-		DBG2(DBG_KNL, "%s: Invalid sock ctx", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: Invalid sock ctx", __FUNCTION__);
 		return INVALID_ARG;
 	}
 
@@ -159,7 +159,8 @@ static status_t ip_send_msg(private_fsm_netlink_ip_t *this, void *rulePtr,
 
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: failed to send message cmd: %u", __FUNCTION__, cmd);
+		DBG2(DBG_KNL, "%s: Error: failed to send message cmd: %u",
+			__FUNCTION__, cmd);
 		this->mutex->unlock(this->mutex);
 		return status;
 	}
@@ -186,7 +187,7 @@ CALLBACK(ip_resp, void, private_fsm_netlink_ip_t *this,
 
 	if (!this || !cm || !data)
 	{
-		DBG2(DBG_KNL, "%s: Received invalid response from socket",
+		DBG2(DBG_KNL, "%s: Error: Received invalid response from socket",
 			__FUNCTION__);
 		return;
 	}
@@ -209,7 +210,7 @@ CALLBACK(ip_err, void, private_fsm_netlink_ip_t *this, void *msg)
 
 	if (!this || !msg)
 	{
-		DBG2(DBG_KNL, "%s: Received invalid response from socket",
+		DBG2(DBG_KNL, "%s: Error: Received invalid response from socket",
 			__FUNCTION__);
 		return;
 	}
@@ -251,7 +252,7 @@ static status_t add_v4_flow(private_fsm_netlink_ip_t *this,
 	status = ip_send_msg(this, &v4_rule, NSS_IPV4_TX_CREATE_RULE_MSG);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: failed to send message", __FUNCTION__);
 		return status;
 	}
 
@@ -293,7 +294,7 @@ static status_t add_v6_flow(private_fsm_netlink_ip_t *this,
 	status = ip_send_msg(this, (void *)&v6_rule, NSS_IPV6_TX_CREATE_RULE_MSG);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: failed to send message", __FUNCTION__);
 		return status;
 	}
 
@@ -354,7 +355,7 @@ static status_t del_v4_flow(private_fsm_netlink_ip_t *this, u_int32_t src,
 	status = ip_send_msg(this, (void *)&v4_rule, NSS_IPV4_TX_DESTROY_RULE_MSG);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: failed to send message", __FUNCTION__);
 		return status;
 	}
 
@@ -385,7 +386,7 @@ static status_t del_v6_flow(private_fsm_netlink_ip_t *this, u_int32_t *src,
 	status = ip_send_msg(this, (void *)&v6_rule, NSS_IPV6_TX_DESTROY_RULE_MSG);
 	if (status != SUCCESS)
 	{
-		DBG2(DBG_KNL, "%s: failed to send message", __FUNCTION__);
+		DBG2(DBG_KNL, "%s: Error: failed to send message", __FUNCTION__);
 		return status;
 	}
 
@@ -455,7 +456,8 @@ fsm_netlink_ip_t *fsm_netlink_ip_create(u_int32_t family)
 
 	if ((family != AF_INET) && (family != AF_INET6))
 	{
-		DBG2(DBG_KNL, "%s: IP family %u not supported", __FUNCTION__, family);
+		DBG2(DBG_KNL, "%s: Error: IP family %u not supported", __FUNCTION__,
+			family);
 		return NULL;
 	}
 
@@ -473,11 +475,13 @@ fsm_netlink_ip_t *fsm_netlink_ip_create(u_int32_t family)
 
 	if (!this)
 	{
+		DBG1(DBG_KNL, "%s: Error: Failed to create this!", __FUNCTION__);
 		return NULL;
 	}
 
 	if (!this->mutex || !this->err_sem)
 	{
+		DBG1(DBG_KNL, "%s: Error: Failed to create objects!", __FUNCTION__);
 		goto exitout;
 	}
 
@@ -494,6 +498,7 @@ fsm_netlink_ip_t *fsm_netlink_ip_create(u_int32_t family)
 
 	if (this->nl_sock == NULL)
 	{
+		DBG1(DBG_KNL, "%s: Error: Failed to create nl_sock!", __FUNCTION__);
 		goto exitout;
 	}
 
@@ -501,6 +506,8 @@ fsm_netlink_ip_t *fsm_netlink_ip_create(u_int32_t family)
 	this->thread = thread_create((thread_main_t)ip_receiver, this);
 	if (this->thread == NULL)
 	{
+		DBG1(DBG_KNL, "%s: Error: Failed to create ip_receiver thread!",
+			__FUNCTION__);
 		goto exitout;
 	}
 

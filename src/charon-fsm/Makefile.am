@@ -15,7 +15,10 @@ charon_fsm_SOURCES = \
 	src/fsm_netlink_crypto.c \
 	src/fsm_netlink_ip.c \
 	src/fsm_netlink_ipsec.c \
-	src/fsm_updown_handler.c
+	src/fsm_updown_handler.c \
+	src/fsm_diffie_hellman.c \
+	src/fsm_aead.c \
+	src/fsm_keymat.c
 
 charon-fsm.o :	$(top_builddir)/config.status
 

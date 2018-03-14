@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2016, 2018, The Linux Foundation. All rights reserved.
  * Copyright (C) 2014 Martin Willi
  * Copyright (C) 2014 revosec AG
  *
@@ -97,7 +97,7 @@ static int validate(void)
 			case EOF:
 				break;
 			default:
-				return command_usage("invalid --print option");
+				return command_usage("invalid --validate option");
 		}
 		break;
 	}
