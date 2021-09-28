@@ -1519,6 +1519,10 @@ static status_t manage_route(private_kernel_pfroute_net_t *this, int op,
 				{
 					add_rt_addr(&msg.hdr, RTA_GATEWAY, gateway);
 				}
+				else if (if_name)
+				{
+					add_rt_ifname(&msg.hdr, RTA_GATEWAY, if_name);
+				}
 				break;
 			default:
 				break;
