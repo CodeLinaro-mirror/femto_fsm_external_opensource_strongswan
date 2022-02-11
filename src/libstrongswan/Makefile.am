@@ -391,6 +391,13 @@ if MONOLITHIC
 endif
 endif
 
+if USE_KDF
+  SUBDIRS += plugins/kdf
+if MONOLITHIC
+  libstrongswan_la_LIBADD += plugins/kdf/libstrongswan-kdf.la
+endif
+endif
+
 if USE_CMAC
   SUBDIRS += plugins/cmac
 if MONOLITHIC

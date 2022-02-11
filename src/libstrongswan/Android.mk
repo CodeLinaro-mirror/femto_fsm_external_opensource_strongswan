@@ -91,6 +91,8 @@ endif
 
 LOCAL_SRC_FILES += $(call add_plugin, hmac)
 
+LOCAL_SRC_FILES += $(call add_plugin, kdf)
+
 LOCAL_SRC_FILES += $(call add_plugin, md4)
 
 LOCAL_SRC_FILES += $(call add_plugin, md5)
