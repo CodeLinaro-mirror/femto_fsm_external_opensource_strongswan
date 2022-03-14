@@ -42,6 +42,12 @@ enum key_derivation_function_t {
 	KDF_UNDEFINED,
 
 	/**
+	 * RFC 7296 prf, expects a pseudo_random_function_t in the constructor,
+	 * parameters are KEY and SALT. Has a fixed output length.
+	 */
+	KDF_PRF,
+
+	/**
 	 * RFC 7296 prf+, expects a pseudo_random_function_t in the constructor,
 	 * parameters are KEY and SALT.
 	 */
