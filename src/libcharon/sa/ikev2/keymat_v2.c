@@ -244,9 +244,8 @@ METHOD(keymat_v2_t, derive_ike_keys, bool,
 	chunk_t prf_plus_seed, spi_i, spi_r, keymat = chunk_empty;
 	chunk_t sk_ei = chunk_empty, sk_er = chunk_empty;
 	chunk_t sk_ai = chunk_empty, sk_ar = chunk_empty, sk_pi, sk_pr;
-	kdf_t *prf_plus = NULL;
+	kdf_t *prf = NULL, *prf_plus = NULL;
 	uint16_t prf_alg, key_size, enc_alg, enc_size, int_alg;
-	prf_t *rekey_prf = NULL;
 	bool success = FALSE;
 
 	spi_i = chunk_alloca(sizeof(uint64_t));
@@ -339,8 +338,11 @@ METHOD(keymat_v2_t, derive_ike_keys, bool,
 	if (rekey_function == PRF_UNDEFINED) /* not rekeying */
 	{
 		/* SKEYSEED = prf(Ni | Nr, g^ir) */
-		if (this->prf->set_key(this->prf, fixed_nonce) &&
-			this->prf->allocate_bytes(this->prf, secret, &skeyseed))
+		prf = lib->crypto->create_kdf(lib->crypto, KDF_PRF, this->prf_alg);
+		if (prf &&
+			prf->set_param(prf, KDF_PARAM_KEY, fixed_nonce) &&
+			prf->set_param(prf, KDF_PARAM_SALT, secret) &&
+			prf->allocate_bytes(prf, 0, &skeyseed))
 		{
 			prf_plus = lib->crypto->create_kdf(lib->crypto, KDF_PRF_PLUS,
 											   this->prf_alg);
@@ -350,8 +352,8 @@ METHOD(keymat_v2_t, derive_ike_keys, bool,
 	{
 		/* SKEYSEED = prf(SK_d (old), [g^ir (new)] | Ni | Nr)
 		 * use OLD SAs PRF functions for both prf_plus and prf */
-		rekey_prf = lib->crypto->create_prf(lib->crypto, rekey_function);
-		if (!rekey_prf)
+		prf = lib->crypto->create_kdf(lib->crypto, KDF_PRF, rekey_function);
+		if (!prf)
 		{
 			DBG1(DBG_IKE, "PRF of old SA %N not supported!",
 				 pseudo_random_function_names, rekey_function);
@@ -362,14 +364,19 @@ METHOD(keymat_v2_t, derive_ike_keys, bool,
 			return FALSE;
 		}
 		secret = chunk_cat("sc", secret, full_nonce);
-		if (rekey_prf->set_key(rekey_prf, rekey_skd) &&
-			rekey_prf->allocate_bytes(rekey_prf, secret, &skeyseed))
+		if (prf->set_param(prf, KDF_PARAM_KEY, rekey_skd) &&
+			prf->set_param(prf, KDF_PARAM_SALT, secret) &&
+			prf->allocate_bytes(prf, 0, &skeyseed))
 		{
 			prf_plus = lib->crypto->create_kdf(lib->crypto, KDF_PRF_PLUS,
 											   rekey_function);
 		}
 	}
 	DBG4(DBG_IKE, "SKEYSEED %B", &skeyseed);
+	chunk_clear(&secret);
+	chunk_free(&full_nonce);
+	chunk_free(&fixed_nonce);
+	DESTROY_IF(prf);
 
 	if (prf_plus &&
 		(!prf_plus->set_param(prf_plus, KDF_PARAM_KEY, skeyseed) ||
@@ -378,13 +385,8 @@ METHOD(keymat_v2_t, derive_ike_keys, bool,
 		prf_plus->destroy(prf_plus);
 		prf_plus = NULL;
 	}
-
 	chunk_clear(&skeyseed);
-	chunk_clear(&secret);
-	chunk_free(&full_nonce);
-	chunk_free(&fixed_nonce);
 	chunk_clear(&prf_plus_seed);
-	DESTROY_IF(rekey_prf);
 
 	if (!prf_plus)
 	{
