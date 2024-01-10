@@ -243,6 +243,15 @@ enum mark_op_t {
 bool mark_from_string(const char *value, mark_op_t ops, mark_t *mark);
 
 /**
+ * Allocate a unique mark with a valid value.
+ *
+ * Returns a unique value that is neither 0 nor MARK_IS_UNIQUE().
+ *
+ * @return			allocated mark value
+ */
+uint32_t allocate_unique_mark(void);
+
+/**
  * Special interface ID values to allocate a unique ID for each CHILD_SA/dir
  */
 #define IF_ID_UNIQUE (0xFFFFFFFF)

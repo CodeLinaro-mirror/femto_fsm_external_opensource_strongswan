@@ -153,6 +153,22 @@ bool mark_from_string(const char *value, mark_op_t ops, mark_t *mark)
 /*
  * Described in header
  */
+uint32_t allocate_unique_mark(void)
+{
+	static refcount_t unique_mark = 0;
+	uint32_t m;
+
+	m = ref_get_nonzero(&unique_mark);
+	while (MARK_IS_UNIQUE(m))
+	{
+		m = ref_get_nonzero(&unique_mark);
+	}
+	return m;
+}
+
+/*
+ * Described in header
+ */
 bool if_id_from_string(const char *value, uint32_t *if_id)
 {
 	char *endptr;
