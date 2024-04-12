@@ -702,6 +702,11 @@ mem_pool_t *mem_pool_create(char *name, host_t *base, int bits)
 		{	/* only serve the second address of the subnet */
 			this->size--;
 		}
+		if (!this->size)
+		{
+			destroy(this);
+			return NULL;
+		}
 	}
 	return &this->public;
 }
