@@ -1444,6 +1444,35 @@ static void add_rt_ifname(struct rt_msghdr *hdr, int type, char *name)
 }
 
 /**
+ * Append an interface address sockaddr_dl to routing message
+ */
+static void add_rt_ifaddr(struct rt_msghdr *hdr, int type, char *name)
+{
+	struct ifaddrs *ifap, *ifa;
+	struct sockaddr_dl *sdl;
+
+	if (getifaddrs(&ifap) < 0)
+	{
+		return;
+	}
+
+	for (ifa = ifap; ifa != NULL; ifa = ifa->ifa_next)
+	{
+		if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_LINK ||
+			!streq(name, ifa->ifa_name))
+		{
+			continue;
+		}
+		sdl = (struct sockaddr_dl*)ifa->ifa_addr;
+		memcpy((char*)hdr + hdr->rtm_msglen, sdl, sdl->sdl_len);
+		hdr->rtm_msglen += SA_LEN(sdl->sdl_len);
+		hdr->rtm_addrs |= type;
+		break;
+	}
+	freeifaddrs(ifap);
+}
+
+/**
  * Add or remove a route
  */
 static status_t manage_route(private_kernel_pfroute_net_t *this, int op,
@@ -1521,7 +1550,7 @@ static status_t manage_route(private_kernel_pfroute_net_t *this, int op,
 				}
 				else if (if_name)
 				{
-					add_rt_ifname(&msg.hdr, RTA_GATEWAY, if_name);
+					add_rt_ifaddr(&msg.hdr, RTA_GATEWAY, if_name);
 				}
 				break;
 			default:
