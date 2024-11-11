@@ -42,9 +42,14 @@ static struct {
 static void test_good_sig(private_key_t *privkey, public_key_t *pubkey)
 {
 	chunk_t sig, data = chunk_from_chars(0x01,0x02,0x03,0xFD,0xFE,0xFF);
-	int i;
+	int i = 0;
 
-	for (i = 0; i < countof(schemes); i++)
+	if (getenv("TESTS_NO_WEAK_SIGNATURES"))
+	{
+		i++;
+	}
+
+	for (; i < countof(schemes); i++)
 	{
 		if (!lib->plugins->has_feature(lib->plugins,
 						PLUGIN_PROVIDE(PUBKEY_VERIFY, schemes[i].scheme)) ||
@@ -105,9 +110,14 @@ static chunk_t invalid_sigs[] = {
 static void test_bad_sigs(public_key_t *pubkey)
 {
 	chunk_t data = chunk_from_chars(0x01,0x02,0x03,0xFD,0xFE,0xFF);
-	int s, i;
+	int s = 0, i;
 
-	for (s = 0; s < countof(schemes); s++)
+	if (getenv("TESTS_NO_WEAK_SIGNATURES"))
+	{
+		s++;
+	}
+
+	for (; s < countof(schemes); s++)
 	{
 		if (schemes[s].key_size != 0 &&
 			schemes[s].key_size != pubkey->get_keysize(pubkey))
