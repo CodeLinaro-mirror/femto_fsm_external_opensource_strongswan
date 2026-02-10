@@ -549,7 +549,12 @@ METHOD(task_t, build_i, status_t,
 		.child_sa = child_sa,
 		.orig_state = child_sa->get_state(child_sa),
 	);
-	child_sa->set_state(child_sa, CHILD_DELETING);
+	/* keep rekeyed CHILD_SA in this state to avoid issuing a down event
+	 * on IKE_SA failures. */
+	if (child_sa->get_state(child_sa) != CHILD_REKEYED)
+	{
+		child_sa->set_state(child_sa, CHILD_DELETING);
+	}
 	this->child_sas->insert_last(this->child_sas, entry);
 
 	log_children(this);

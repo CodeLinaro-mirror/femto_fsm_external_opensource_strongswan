@@ -423,6 +423,14 @@ METHOD(task_t, build_r, status_t,
 		message->add_notify(message, TRUE, TEMPORARY_FAILURE, chunk_empty);
 		return SUCCESS;
 	}
+	if (this->child_sa->get_state(this->child_sa) == CHILD_REKEYED)
+	{
+		DBG1(DBG_IKE, "unable to rekey CHILD_SA %s{%u}, already rekeyed",
+			 this->child_sa->get_name(this->child_sa),
+			 this->child_sa->get_unique_id(this->child_sa));
+		message->add_notify(message, TRUE, TEMPORARY_FAILURE, chunk_empty);
+		return SUCCESS;
+	}
 	if (actively_rekeying(this, &followup_sent) && followup_sent)
 	{
 		DBG1(DBG_IKE, "peer initiated rekeying, but we did too and already "
