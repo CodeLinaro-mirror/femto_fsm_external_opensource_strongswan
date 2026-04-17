@@ -6,6 +6,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  actions: write
+
 env:
   # this test case does not actually test anything but tries to access system
   # directories that might be inaccessible on build hosts
@@ -66,23 +69,32 @@ jobs:
       TEST: ${{ matrix.test }}
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/cache@v5
+      - uses: actions/cache/restore@v5
+        id: cache-restore
         with:
           path: ~/.cache/ccache
           # with regards to ccache, monolithic builds don't differ from regular
           # builds and, similarly, builds with leak-detective only differ in two
           # files (LD itself and library.c); but different tests build different
           # dependencies, so different caches are needed
-          key: ccache-ubuntu-latest-${{ env.CC }}-${{ matrix.test }}-${{ github.sha }}
+          key: ccache-ubuntu-latest-${{ env.CC }}-${{ matrix.test }}
           restore-keys: |
-            ccache-ubuntu-latest-${{ env.CC }}-${{ matrix.test }}-
             ccache-ubuntu-latest-${{ env.CC }}-
       - run: |
           sudo apt-get install -qq ccache
           echo "PATH=/usr/lib/ccache:$PATH" >> $GITHUB_ENV
           ccache -z
       - uses: ./.github/actions/default
-      - run: ccache -s
+      - run: ccache -sv
+      # delete old cache entry as we currently can't update it any other way
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        if: steps.cache-restore.outputs.cache-hit
+        run: gh cache delete -r ${{ github.ref }} ${{ steps.cache-restore.outputs.cache-primary-key }}
+      - uses: actions/cache/save@v5
+        with:
+          path: ~/.cache/ccache
+          key: ${{ steps.cache-restore.outputs.cache-primary-key }}
       - if: ${{ success() && matrix.test == 'coverage' }}
         uses: codecov/codecov-action@v4
         with:
@@ -127,17 +139,16 @@ jobs:
       ACTIVE_TRANSFORMS_REF: .github/active-transforms/${{ matrix.test }}
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/cache@v5
+      - uses: actions/cache/restore@v5
+        id: cache-restore
         with:
           # path is different on newer systems
           path: |
             ~/.cache/ccache
             ~/.ccache
-          key: ccache-${{ matrix.os }}-${{ env.CC }}-${{ matrix.test }}-${{ github.sha }}
+          key: ccache-${{ matrix.os }}-${{ env.CC }}-${{ matrix.test }}
           restore-keys: |
-            ccache-${{ matrix.os }}-${{ env.CC }}-${{ matrix.test }}-
-            ccache-${{ matrix.os }}-${{ env.CC }}-all-${{ github.sha }}
-            ccache-${{ matrix.os }}-${{ env.CC }}-all-
+            ccache-${{ matrix.os }}-${{ env.CC }}-all
             ccache-${{ matrix.os }}-${{ env.CC }}-
       - run: |
           sudo apt-get install -qq ccache
@@ -154,7 +165,18 @@ jobs:
       - name: Verify active transforms
         run: |
           test ! -f $ACTIVE_TRANSFORMS_REF || diff -u --color=always $ACTIVE_TRANSFORMS_REF $TESTS_ACTIVE_TRANSFORMS
-      - run: ccache -s
+      - run: ccache -sv
+      # delete old cache entry as we currently can't update it any other way
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        if: steps.cache-restore.outputs.cache-hit
+        run: gh cache delete -r ${{ github.ref }} ${{ steps.cache-restore.outputs.cache-primary-key }}
+      - uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.cache/ccache
+            ~/.ccache
+          key: ${{ steps.cache-restore.outputs.cache-primary-key }}
       - if: ${{ failure() }}
         uses: actions/upload-artifact@v6
         with:
@@ -180,22 +202,33 @@ jobs:
       TEST: ${{ matrix.test }}
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/cache@v5
+      - uses: actions/cache/restore@v5
+        id: cache-restore
         with:
           # path is different on newer systems
           path: |
             ~/.cache/ccache
             ~/.ccache
-          key: ccache-${{ matrix.os }}-${{ env.CC }}-${{ matrix.test }}-${{ github.sha }}
+          key: ccache-${{ matrix.os }}-${{ env.CC }}-${{ matrix.test }}
           restore-keys: |
-            ccache-${{ matrix.os }}-${{ env.CC }}-${{ matrix.test }}-
             ccache-${{ matrix.os }}-${{ env.CC }}-
       - run: |
           sudo apt-get install -qq ccache
           echo "PATH=/usr/lib/ccache:$PATH" >> $GITHUB_ENV
           ccache -z
       - uses: ./.github/actions/default
-      - run: ccache -s
+      - run: ccache -sv
+      # delete old cache entry as we currently can't update it any other way
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        if: steps.cache-restore.outputs.cache-hit
+        run: gh cache delete -r ${{ github.ref }} ${{ steps.cache-restore.outputs.cache-primary-key }}
+      - uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.cache/ccache
+            ~/.ccache
+          key: ${{ steps.cache-restore.outputs.cache-primary-key }}
       - if: ${{ failure() }}
         uses: actions/upload-artifact@v6
         with:
@@ -216,19 +249,27 @@ jobs:
       - uses: actions/checkout@v6
       # install tar and zstd before the cache action that requires them
       - run: |
-          apk add ccache tar zstd
+          apk add ccache tar zstd github-cli
           echo "PATH=/usr/lib/ccache/bin:$PATH" >> $GITHUB_ENV
-      - uses: actions/cache@v5
+      - uses: actions/cache/restore@v5
+        id: cache-restore
         with:
           path: ~/.cache/ccache
-          key: ccache-alpine-${{ github.sha }}
-          restore-keys: |
-            ccache-alpine-
+          key: ccache-alpine
       - run: ccache -z
       # don't use the default action as we don't want to build dependencies or install bash
       - run: ./scripts/test.sh deps
       - run: ./scripts/test.sh
       - run: ccache -sv
+      # delete old cache entry as we currently can't update it any other way
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        if: steps.cache-restore.outputs.cache-hit
+        run: gh cache delete --repo ${{ github.repository }} -r ${{ github.ref }} ${{ steps.cache-restore.outputs.cache-primary-key }}
+      - uses: actions/cache/save@v5
+        with:
+          path: ~/.cache/ccache
+          key: ${{ steps.cache-restore.outputs.cache-primary-key }}
       - if: ${{ failure() }}
         uses: actions/upload-artifact@v6
         with:
