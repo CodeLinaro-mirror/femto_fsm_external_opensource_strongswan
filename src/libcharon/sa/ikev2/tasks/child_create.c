@@ -1768,7 +1768,7 @@ METHOD(task_t, build_i, status_t,
 													   OPT_PER_CPU_SAS);
 	}
 
-	this->proposals = this->config->get_proposals(this->config, no_ke);
+	this->proposals = this->config->get_proposals(this->config, no_ke, TRUE);
 	this->mode = this->config->get_mode(this->config);
 
 	this->child.if_id_in_def = this->ike_sa->get_if_id(this->ike_sa, TRUE);
@@ -2486,7 +2486,7 @@ static void raise_alerts(private_child_create_t *this, notify_type_t type)
 	switch (type)
 	{
 		case NO_PROPOSAL_CHOSEN:
-			list = this->config->get_proposals(this->config, FALSE);
+			list = this->config->get_proposals(this->config, FALSE, FALSE);
 			charon->bus->alert(charon->bus, ALERT_PROPOSAL_MISMATCH_CHILD, list);
 			list->destroy_offset(list, offsetof(proposal_t, destroy));
 			break;

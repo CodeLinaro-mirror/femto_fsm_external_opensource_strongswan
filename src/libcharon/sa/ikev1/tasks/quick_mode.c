@@ -802,7 +802,7 @@ static linked_list_t *get_proposals(private_quick_mode_t *this,
 	proposal_t *proposal;
 	enumerator_t *enumerator;
 
-	list = this->config->get_proposals(this->config, FALSE);
+	list = this->config->get_proposals(this->config, FALSE, TRUE);
 	enumerator = list->create_enumerator(list);
 	while (enumerator->enumerate(enumerator, &proposal))
 	{
@@ -864,7 +864,7 @@ METHOD(task_t, build_i, status_t,
 				}
 			}
 
-			list = this->config->get_proposals(this->config, FALSE);
+			list = this->config->get_proposals(this->config, FALSE, TRUE);
 			if (list->get_first(list, (void**)&proposal) == SUCCESS)
 			{
 				this->proto = proposal->get_protocol(proposal);

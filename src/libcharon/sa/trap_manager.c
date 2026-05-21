@@ -219,7 +219,7 @@ static status_t install_trap(child_sa_t *child_sa, linked_list_t *local,
 
 	/* we don't know the finally negotiated protocol (ESP|AH), we install
 	 * the SA with the protocol of the first proposal */
-	proposals = child->get_proposals(child, TRUE);
+	proposals = child->get_proposals(child, TRUE, FALSE);
 	if (proposals->get_first(proposals, (void**)&proposal) == SUCCESS)
 	{
 		proto = proposal->get_protocol(proposal);
