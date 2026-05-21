@@ -271,7 +271,7 @@ METHOD(task_t, build_i, status_t,
 																 FALSE);
 			}
 			this->lifetime += this->peer_cfg->get_over_time(this->peer_cfg);
-			proposals = ike_cfg->get_proposals(ike_cfg);
+			proposals = ike_cfg->get_proposals(ike_cfg, TRUE);
 			sa_payload = sa_payload_create_from_proposals_v1(proposals,
 									this->lifetime, 0, this->method, MODE_NONE,
 									ENCAP_NONE, 0);

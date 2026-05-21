@@ -367,7 +367,7 @@ static bool build_payloads(private_ike_init_t *this, message_t *message)
 
 	if (this->initiator)
 	{
-		proposal_list = ike_cfg->get_proposals(ike_cfg);
+		proposal_list = ike_cfg->get_proposals(ike_cfg, TRUE);
 		other_ke_methods = linked_list_create();
 		enumerator = proposal_list->create_enumerator(proposal_list);
 		while (enumerator->enumerate(enumerator, (void**)&proposal))
@@ -1216,7 +1216,7 @@ static void raise_alerts(private_ike_init_t *this, notify_type_t type)
 	{
 		case NO_PROPOSAL_CHOSEN:
 			ike_cfg = this->ike_sa->get_ike_cfg(this->ike_sa);
-			list = ike_cfg->get_proposals(ike_cfg);
+			list = ike_cfg->get_proposals(ike_cfg, FALSE);
 			charon->bus->alert(charon->bus, ALERT_PROPOSAL_MISMATCH_IKE, list);
 			list->destroy_offset(list, offsetof(proposal_t, destroy));
 			break;
