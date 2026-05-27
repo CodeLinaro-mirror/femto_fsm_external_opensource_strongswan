@@ -893,9 +893,18 @@ _list-conns_ command.
 			version = <IKE version as string, IKEv1|IKEv2 or 0 for any>
 			reauth_time = <IKE_SA reauthentication interval in seconds>
 			rekey_time = <IKE_SA rekeying interval in seconds>
-			proposals = [
-				<list of configured IKE proposals>
-			]
+			proposals = { # numbered (zero-based) sub-sections for IKE proposal
+				<num> = { # lists with NAME[_KEYSIZE] for each transform type in proposal
+					encr = [ <list of encryption algorithms> ]
+					integ = [ <list of integrity algorithms> ]
+					prf = [ <list of pseudo random functions> ]
+					ke = [ <list of key exchange methods> ]
+					ake1 = [ <list of first additional key exchange methods> ]
+					...
+					ake7 = [ <list fo seventh additional key exchange methods> ]
+					sn = [ <list of sequence number transforms> ]
+				}
+			}
 			local*, remote* = { # multiple local and remote auth sections
 				class = <authentication type>
 				eap-type = <EAP type to authenticate if when using EAP>
@@ -923,12 +932,12 @@ _list-conns_ command.
 					rekey_time = <CHILD_SA rekeying interval in seconds>
 					rekey_bytes = <CHILD_SA rekeying interval in bytes>
 					rekey_packets = <CHILD_SA rekeying interval in packets>
-					esp_proposals = [
-						<list of configured ESP proposals>
-					]
-					ah_proposals = [
-						<list of configured AH proposals>
-					]
+					esp_proposals = {
+						<sub-sections for ESP proposals, see above for details>
+					}
+					ah_proposals = {
+						<sub-sections for AH proposals, see above for details>
+					}
 					local-ts = [
 						<list of local traffic selectors>
 					]
