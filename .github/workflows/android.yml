@@ -60,6 +60,9 @@ jobs:
           sudo apt-get install -qq ccache
           echo "PATH=/usr/lib/ccache:$PATH" >> $GITHUB_ENV
           ccache -z
+      - name: Increase JVM memory settings
+        run: |
+          echo "org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=2g" >> src/frontends/android/gradle.properties
       - uses: ./.github/actions/default
         env:
           ANDROID_NDK_ROOT: ${{ steps.ndk-install.outputs.ANDROID_NDK_ROOT }}
