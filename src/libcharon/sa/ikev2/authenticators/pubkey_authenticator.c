@@ -624,7 +624,7 @@ METHOD(authenticator_t, process, status_t,
 	auth_method_t auth_method;
 	auth_payload_t *auth_payload;
 	notify_payload_t *notify;
-	chunk_t auth_data, octets;
+	chunk_t auth_data, octets, curve;
 	identification_t *id;
 	auth_cfg_t *auth, *current_auth;
 	enumerator_t *enumerator;
@@ -632,6 +632,7 @@ METHOD(authenticator_t, process, status_t,
 	signature_params_t *params;
 	status_t status = NOT_FOUND;
 	const char *reason DBG_UNUSED = "unsupported";
+	char *curve_name;
 	bool online;
 
 	auth_payload = (auth_payload_t*)message->get_payload(message, PLV2_AUTH);
@@ -706,6 +707,16 @@ METHOD(authenticator_t, process, status_t,
 			auth->add(auth, AUTH_RULE_AUTH_CLASS, AUTH_CLASS_PUBKEY);
 			auth->add(auth, AUTH_RULE_IKE_SIGNATURE_SCHEME,
 					  signature_params_clone(params));
+			if (public->get_type(public) == KEY_ECDSA &&
+				public->get_encoding(public, PUBKEY_ECDSA_CURVE_DER, &curve))
+			{
+				curve_name = ecdsa_curve_to_string(curve);
+				if (curve_name)
+				{
+					auth->add(auth, AUTH_RULE_IKE_ECDSA_CURVE, curve_name);
+				}
+				chunk_free(&curve);
+			}
 			if (!online)
 			{
 				auth->add(auth, AUTH_RULE_CERT_VALIDATION_SUSPENDED, TRUE);

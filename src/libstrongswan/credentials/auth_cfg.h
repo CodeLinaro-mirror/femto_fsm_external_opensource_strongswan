@@ -109,6 +109,8 @@ enum auth_rule_t {
 	AUTH_RULE_ECDSA_STRENGTH,
 	/** required ECDSA curve, name/OID (via ecdsa_curve_to_string()) as char* */
 	AUTH_RULE_ECDSA_CURVE,
+	/** required ECDSA curve for IKE authentication, name/OID as char* */
+	AUTH_RULE_IKE_ECDSA_CURVE,
 	/** required signature scheme, signature_params_t* */
 	AUTH_RULE_SIGNATURE_SCHEME,
 	/** required signature scheme for IKE authentication, signature_params_t* */
