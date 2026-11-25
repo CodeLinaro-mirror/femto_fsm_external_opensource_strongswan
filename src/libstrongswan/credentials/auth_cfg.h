@@ -302,6 +302,14 @@ auth_cfg_t *auth_cfg_create();
 bool auth_cfg_is_pubkey_prefix(const char *str);
 
 /**
+ * Check if the given string matches a known key type.
+ *
+ * @param str			string to check
+ * @return				key type if matched, KEY_ANY if not
+ */
+key_type_t auth_cfg_is_known_key_type(const char *str);
+
+/**
  * Add the ECDSA curve of the given public key to the config.  If the curve
  * can't be determined, a marker is added to check against in
  * authc_cfg_t::complies().

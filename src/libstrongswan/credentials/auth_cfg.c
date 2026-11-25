@@ -683,6 +683,20 @@ bool auth_cfg_is_pubkey_prefix(const char *str)
 	return is_known_key_type(str, TRUE, NULL, NULL);
 }
 
+/*
+ * Described in header
+ */
+key_type_t auth_cfg_is_known_key_type(const char *str)
+{
+	key_type_t type;
+
+	if (is_known_key_type(str, FALSE, &type, NULL))
+	{
+		return type;
+	}
+	return KEY_ANY;
+}
+
 METHOD(auth_cfg_t, add_pubkey_constraints, void,
 	private_auth_cfg_t *this, char* constraints, bool ike)
 {
